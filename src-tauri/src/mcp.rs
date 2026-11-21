@@ -81,19 +81,32 @@ fn build_time_dev_mcp_server_dir() -> PathBuf {
 fn mcp_server_dir_candidates(dev_path: &Path, resource_roots: &[PathBuf]) -> Vec<PathBuf> {
     let current_dir = std::env::current_dir().ok();
 
-    mcp_server_dir_candidates_for(dev_path, resource_roots, current_dir.as_deref())
+    // Release builds must pick the bundled resource (SDK inlined) over the unbundled source checkout.
+    mcp_server_dir_candidates_for(
+        dev_path,
+        resource_roots,
+        current_dir.as_deref(),
+        !cfg!(debug_assertions),
+    )
 }
 
 fn mcp_server_dir_candidates_for(
     dev_path: &Path,
     resource_roots: &[PathBuf],
     current_dir: Option<&Path>,
+    prefer_bundled: bool,
 ) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
-    push_unique_path(&mut candidates, dev_path.to_path_buf());
+    if !prefer_bundled {
+        push_unique_path(&mut candidates, dev_path.to_path_buf());
+    }
 
     for root in resource_roots {
         push_resource_root_candidates(&mut candidates, root);
+    }
+
+    if prefer_bundled {
+        push_unique_path(&mut candidates, dev_path.to_path_buf());
     }
 
     for root in runtime_development_roots(current_dir) {
@@ -641,6 +654,23 @@ mod tests {
     }
 
     #[test]
+    fn mcp_server_dir_candidates_order_dev_path_by_build_kind() {
+        let dev_path = Path::new("/repo/mcp-server");
+        let resource_roots = vec![PathBuf::from(
+            "/Applications/Tolaria.app/Contents/Resources",
+        )];
+        let resource_dir = PathBuf::from("/Applications/Tolaria.app/Contents/Resources/mcp-server");
+
+        let release = mcp_server_dir_candidates_for(dev_path, &resource_roots, None, true);
+        assert_eq!(release[0], resource_dir);
+        assert!(release.contains(&dev_path.to_path_buf()));
+
+        let debug = mcp_server_dir_candidates_for(dev_path, &resource_roots, None, false);
+        assert_eq!(debug[0], dev_path);
+        assert_eq!(debug[1], resource_dir);
+    }
+
+    #[test]
     fn mcp_server_dir_candidates_include_linux_package_resource_roots() {
         let dev_path = Path::new("/repo/mcp-server");
         let resource_roots = vec![PathBuf::from("/opt/tolaria")];
@@ -693,7 +723,8 @@ mod tests {
     fn mcp_server_dir_candidates_include_runtime_dev_roots_when_build_path_is_stale() {
         let stale_dev_path = Path::new("/Users/runner/work/tolaria/tolaria/mcp-server");
         let current_dir = Path::new("/Users/luca/Workspace/tolaria");
-        let candidates = mcp_server_dir_candidates_for(stale_dev_path, &[], Some(current_dir));
+        let candidates =
+            mcp_server_dir_candidates_for(stale_dev_path, &[], Some(current_dir), false);
 
         assert!(candidates.contains(&PathBuf::from("/Users/luca/Workspace/tolaria/mcp-server")));
         assert!(candidates.contains(&PathBuf::from(
@@ -707,7 +738,7 @@ mod tests {
         let resource_roots = vec![PathBuf::from(
             "/Applications/Tolaria.app/Contents/Resources",
         )];
-        let candidates = mcp_server_dir_candidates_for(dev_path, &resource_roots, None);
+        let candidates = mcp_server_dir_candidates_for(dev_path, &resource_roots, None, false);
 
         assert_candidates_include(
             &candidates,

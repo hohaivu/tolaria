@@ -7,7 +7,7 @@
 import { build } from 'esbuild'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
-import { mkdirSync, writeFileSync } from 'fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'fs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT = join(__dirname, '..')
@@ -41,5 +41,17 @@ await build({
   entryPoints: [join(SRC, 'ws-bridge.js')],
   outfile: join(OUT, 'ws-bridge.js'),
 })
+
+// A bare require of the SDK means it was left external; the shipped app has no node_modules.
+for (const file of ['index.js', 'ws-bridge.js']) {
+  const code = readFileSync(join(OUT, file), 'utf8')
+  if (/require\(\s*["']@modelcontextprotocol\//.test(code)) {
+    throw new Error(`${file} requires @modelcontextprotocol/sdk instead of inlining it`)
+  }
+}
+const indexCode = readFileSync(join(OUT, 'index.js'), 'utf8')
+if (!indexCode.includes('@modelcontextprotocol/sdk')) {
+  throw new Error('index.js does not contain the inlined @modelcontextprotocol/sdk')
+}
 
 console.log('mcp-server bundled → src-tauri/resources/mcp-server/')
