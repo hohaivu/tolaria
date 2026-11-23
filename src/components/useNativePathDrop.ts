@@ -5,6 +5,8 @@ interface NativePathDropOptions<T extends HTMLElement> {
   targetRef: RefObject<T | null>
   disabled?: boolean
   onPathDrop: (paths: string[]) => void
+  /** Fires when an OS drag enters the window, before any drop of that gesture. */
+  onDragEnter?: () => void
 }
 
 function pointInRect(point: { x: number; y: number }, rect: DOMRect): boolean {
@@ -64,17 +66,21 @@ export function useNativePathDrop<T extends HTMLElement>({
   targetRef,
   disabled = false,
   onPathDrop,
+  onDragEnter,
 }: NativePathDropOptions<T>) {
   const disabledRef = useRef(disabled)
   const onPathDropRef = useRef(onPathDrop)
+  const onDragEnterRef = useRef(onDragEnter)
 
   useLayoutEffect(() => {
     disabledRef.current = disabled
     onPathDropRef.current = onPathDrop
-  }, [disabled, onPathDrop])
+    onDragEnterRef.current = onDragEnter
+  }, [disabled, onPathDrop, onDragEnter])
 
   useTauriDragDropEvent((event) => {
     if (disabledRef.current) return
+    if (event.payload.type === 'enter') onDragEnterRef.current?.()
 
     const target = targetRef.current
     if (!target || !shouldHandleNativePathDrop(target, event)) return

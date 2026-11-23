@@ -213,6 +213,12 @@ function emitNativePathDrop(paths: string[], position = { x: 20, y: 20 }) {
   })
 }
 
+function emitNativeDragEnter(position = { x: 20, y: 20 }) {
+  const handler = nativeDropState.handlers['native-drag-drop']
+  if (!handler) throw new Error('No native drop handler registered')
+  handler({ payload: { type: 'enter', paths: [], position } })
+}
+
 async function waitForNativePathDropListener() {
   await waitFor(() => {
     expect(nativeDropState.handlers['native-drag-drop']).toBeDefined()
@@ -929,5 +935,58 @@ describe('WikilinkChatInput', () => {
     await waitFor(() => {
       expect(onDraftChange).toHaveBeenCalledWith('/Users/test/Projects')
     })
+  })
+  it('stages the image and rejects the PDF in one mixed DOM-only drop', () => {
+    const onAttachImages = vi.fn()
+    const onUnsupportedPaste = vi.fn()
+    render(<Controlled onAttachImages={onAttachImages} onUnsupportedPaste={onUnsupportedPaste} />)
+
+    const editor = screen.getByTestId('agent-input') as HTMLDivElement
+    const pngFile = new File(['png'], 'diagram.png', { type: 'image/png' })
+    const pdfFile = new File(['pdf'], 'spec.pdf', { type: 'application/pdf' })
+    fireEvent.drop(editor, {
+      dataTransfer: {
+        getData: vi.fn(() => ''),
+        files: [pngFile, pdfFile],
+        items: [
+          { kind: 'file', type: 'image/png' },
+          { kind: 'file', type: 'application/pdf' },
+        ],
+      },
+    })
+
+    expect(onAttachImages).toHaveBeenCalledWith({ files: [pngFile] })
+    expect(onUnsupportedPaste).toHaveBeenCalledWith(translate('en', 'ai.panel.unsupportedPaste'))
+  })
+
+  it('treats a same-named image dropped in a new gesture as a new drop, in either channel order', async () => {
+    nativeDropState.tauriMode = true
+    const onAttachImages = vi.fn()
+    render(<Controlled onAttachImages={onAttachImages} />)
+
+    const editor = screen.getByTestId('agent-input') as HTMLDivElement
+    mockElementRect(editor)
+    await waitForNativePathDropListener()
+
+    const pngFile = new File(['png'], 'diagram.png', { type: 'image/png' })
+    const domDrop = () => fireEvent.drop(editor, {
+      dataTransfer: { getData: vi.fn(() => ''), files: [pngFile], items: [{ kind: 'file', type: 'image/png' }] },
+    })
+
+    domDrop()
+    act(() => { emitNativeDragEnter() })
+    act(() => { emitNativePathDrop(['/other/diagram.png']) })
+    expect(onAttachImages).toHaveBeenCalledTimes(2)
+
+    // One dual-channel gesture, native first: the DOM copy is still deduplicated.
+    fireEvent.dragEnter(editor)
+    act(() => { emitNativePathDrop(['/third/diagram.png']) })
+    domDrop()
+    expect(onAttachImages).toHaveBeenCalledTimes(3)
+
+    // A later DOM-only drop after a new drag entry is not swallowed by the previous native drop.
+    fireEvent.dragEnter(editor)
+    domDrop()
+    expect(onAttachImages).toHaveBeenCalledTimes(4)
   })
 })

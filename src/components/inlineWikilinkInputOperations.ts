@@ -37,6 +37,10 @@ export function extractDroppedImageFiles(dataTransfer: DataTransfer): File[] {
   return extractClipboardFiles(dataTransfer).filter(isImageAttachmentCandidateFile)
 }
 
+export function hasRejectedDroppedFiles(dataTransfer: DataTransfer): boolean {
+  return extractClipboardFiles(dataTransfer).some((file) => !isImageAttachmentCandidateFile(file))
+}
+
 export function extractPastedImageFiles(clipboardData: DataTransfer): File[] {
   const pastedFiles = extractClipboardFiles(clipboardData)
   const hasImageItem = Array.from(clipboardData.items ?? []).some(

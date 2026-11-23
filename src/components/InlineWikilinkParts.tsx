@@ -172,6 +172,7 @@ export function InlineWikilinkEditorField(options: {
   onInput: () => void
   onKeyDown: (event: React.KeyboardEvent<HTMLDivElement>) => void
   onCut: (event: React.ClipboardEvent<HTMLDivElement>) => void
+  onDragEnter?: (event: React.DragEvent<HTMLDivElement>) => void
   onDragOver?: (event: React.DragEvent<HTMLDivElement>) => void
   onDrop: (event: React.DragEvent<HTMLDivElement>) => void
   onPaste: (event: React.ClipboardEvent<HTMLDivElement>) => void
@@ -194,6 +195,7 @@ export function InlineWikilinkEditorField(options: {
     onInput,
     onKeyDown,
     onCut,
+    onDragEnter,
     onDragOver,
     onDrop,
     onPaste,
@@ -214,6 +216,7 @@ export function InlineWikilinkEditorField(options: {
     onCompositionStart,
     onCompositionUpdate,
     onCut,
+    onDragEnter,
     onDragOver,
     onDrop,
     onInput,
@@ -266,6 +269,7 @@ type InlineWikilinkEditorHandlers = Pick<
   | 'onCompositionStart'
   | 'onCompositionUpdate'
   | 'onCut'
+  | 'onDragEnter'
   | 'onDragOver'
   | 'onDrop'
   | 'onInput'
@@ -339,6 +343,7 @@ function inlineWikilinkEditorListenerMap(
     onCompositionStart,
     onCompositionUpdate,
     onCut,
+    onDragEnter,
     onDragOver,
     onDrop,
     onInput,
@@ -354,6 +359,7 @@ function inlineWikilinkEditorListenerMap(
     ['input', () => onInput()],
     ['keydown', (event) => onKeyDown(withNativeEvent(event) as unknown as React.KeyboardEvent<HTMLDivElement>)],
     ['cut', (event) => onCut(withNativeEvent(event) as unknown as React.ClipboardEvent<HTMLDivElement>)],
+    ['dragenter', (event) => onDragEnter?.(withNativeEvent(event) as unknown as React.DragEvent<HTMLDivElement>)],
     ['dragover', (event) => onDragOver?.(withNativeEvent(event) as unknown as React.DragEvent<HTMLDivElement>)],
     ['drop', (event) => onDrop(withNativeEvent(event) as unknown as React.DragEvent<HTMLDivElement>)],
     ['paste', (event) => onPaste(withNativeEvent(event) as unknown as React.ClipboardEvent<HTMLDivElement>)],

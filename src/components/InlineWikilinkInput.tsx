@@ -35,6 +35,7 @@ import {
   containsUnsupportedInlineContent,
   deleteToLineStart,
   extractDroppedImageFiles,
+  hasRejectedDroppedFiles,
   extractPastedImageFiles,
   hasUnsupportedClipboardPayload,
   partitionDroppedImagePaths,
@@ -199,6 +200,7 @@ export function InlineWikilinkInput(options: InlineWikilinkInputProps) {
     },
     [editorRef, onChange, selectionRange, setSelectionRange, value],
   )
+  const resetDropClaim = () => dropClaimRef.current.reset()
   const insertNativePathDrop = (paths: string[]) => {
     const { imagePaths, textPaths } = onAttachImages
       ? partitionDroppedImagePaths(paths)
@@ -218,6 +220,7 @@ export function InlineWikilinkInput(options: InlineWikilinkInputProps) {
     targetRef: editorRef,
     disabled,
     onPathDrop: insertNativePathDrop,
+    onDragEnter: resetDropClaim,
   })
   const notifyUnsupportedPaste = useCallback(
     () => onUnsupportedPaste?.(translate(locale, 'ai.panel.unsupportedPaste')),
@@ -338,6 +341,9 @@ export function InlineWikilinkInput(options: InlineWikilinkInputProps) {
     editor.addEventListener('beforeinput', handleBeforeInput as EventListener)
     return () => editor.removeEventListener('beforeinput', handleBeforeInput as EventListener)
   }, [editorRef, handleBeforeInput, renderVersion])
+  const handleDragEnter = (event: React.DragEvent<HTMLDivElement>) => {
+    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) resetDropClaim()
+  }
   const handleDragOver = (event: React.DragEvent<HTMLDivElement>) => {
     if (disabled || !onAttachImages) return
     if (hasUnsupportedClipboardPayload(event.dataTransfer)) {
@@ -355,6 +361,7 @@ export function InlineWikilinkInput(options: InlineWikilinkInputProps) {
       if (dropClaimRef.current.claim({ channel: 'dom', filenames: imageFiles.map((file) => file.name) })) {
         onAttachImages?.({ files: imageFiles })
       }
+      if (hasRejectedDroppedFiles(event.dataTransfer)) notifyUnsupportedPaste()
       return
     }
 
@@ -542,6 +549,7 @@ export function InlineWikilinkInput(options: InlineWikilinkInputProps) {
       onInput={handleInput}
       onKeyDown={handleKeyDown}
       onCut={cutSelectedContent}
+      onDragEnter={handleDragEnter}
       onDragOver={handleDragOver}
       onDrop={handleDrop}
       onPaste={handlePaste}
