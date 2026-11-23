@@ -149,7 +149,7 @@ fn validation_rejects_unsupported_extensions_and_oversized_images_without_writin
 
     assert!(!vault.path().join(".tolaria").exists());
 
-    let max_bytes = vec![0x42u8; AI_CHAT_IMAGE_MAX_BYTES as usize];
+    let max_bytes = vec![0x42u8; MAX_IMAGE_BYTES as usize];
     let ok_src = source_dir.path().join("exact_limit.png");
     fs::write(&ok_src, &max_bytes).unwrap();
     assert!(stage_ai_chat_image_from_path(&vault_path, ok_src.to_str().unwrap()).is_ok());
@@ -157,7 +157,7 @@ fn validation_rejects_unsupported_extensions_and_oversized_images_without_writin
 
     clear_ai_chat_images(&vault_path).unwrap();
 
-    let too_large_bytes = vec![0x42u8; (AI_CHAT_IMAGE_MAX_BYTES + 1) as usize];
+    let too_large_bytes = vec![0x42u8; (MAX_IMAGE_BYTES + 1) as usize];
     let over_err =
         stage_ai_chat_image(&vault_path, "too_big.png", &encode_base64(&too_large_bytes))
             .unwrap_err();

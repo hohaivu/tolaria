@@ -182,18 +182,18 @@ define_desktop_stream_command!(
 );
 
 #[cfg(desktop)]
+fn expand_tilde_paths(paths: Vec<String>) -> Vec<String> {
+    paths
+        .into_iter()
+        .map(|path| expand_tilde(&path).into_owned())
+        .collect()
+}
+
+#[cfg(desktop)]
 fn normalize_agent_request(mut request: AiAgentStreamRequest) -> AiAgentStreamRequest {
     request.vault_path = expand_tilde(&request.vault_path).into_owned();
-    request.vault_paths = request
-        .vault_paths
-        .into_iter()
-        .map(|path| expand_tilde(&path).into_owned())
-        .collect();
-    request.attachments = request
-        .attachments
-        .into_iter()
-        .map(|path| expand_tilde(&path).into_owned())
-        .collect();
+    request.vault_paths = expand_tilde_paths(request.vault_paths);
+    request.attachments = expand_tilde_paths(request.attachments);
     request
 }
 
@@ -273,15 +273,14 @@ pub fn stage_ai_chat_image(
     filename: String,
     data_base64: String,
 ) -> Result<String, String> {
-    let vault_path = expand_tilde(&vault_path);
-    let staged_path = crate::ai_chat_images::stage_ai_chat_image(
-        vault_path.as_ref(),
-        &filename,
-        &data_base64,
-    )?;
-    let tmp_dir = crate::ai_chat_images::ai_chat_tmp_dir(vault_path.as_ref());
-    crate::sync_ai_chat_tmp_asset_scope(&app_handle, &tmp_dir)?;
-    Ok(staged_path)
+    super::vault::with_image_asset_scope(
+        &app_handle,
+        std::path::Path::new(&vault_path),
+        super::vault::ImageAssetScope::SavedFileDir,
+        |requested_root| {
+            crate::ai_chat_images::stage_ai_chat_image(requested_root, &filename, &data_base64)
+        },
+    )
 }
 
 #[cfg(desktop)]
@@ -291,25 +290,25 @@ pub fn stage_ai_chat_image_from_path(
     vault_path: String,
     source_path: String,
 ) -> Result<String, String> {
-    let vault_path = expand_tilde(&vault_path);
     let source_path = expand_tilde(&source_path);
-    let staged_path = crate::ai_chat_images::stage_ai_chat_image_from_path(
-        vault_path.as_ref(),
-        source_path.as_ref(),
-    )?;
-    let tmp_dir = crate::ai_chat_images::ai_chat_tmp_dir(vault_path.as_ref());
-    crate::sync_ai_chat_tmp_asset_scope(&app_handle, &tmp_dir)?;
-    Ok(staged_path)
+    super::vault::with_image_asset_scope(
+        &app_handle,
+        std::path::Path::new(&vault_path),
+        super::vault::ImageAssetScope::SavedFileDir,
+        |requested_root| {
+            crate::ai_chat_images::stage_ai_chat_image_from_path(
+                requested_root,
+                source_path.as_ref(),
+            )
+        },
+    )
 }
 
 #[cfg(desktop)]
 #[tauri::command]
 pub fn delete_ai_chat_images(vault_path: String, paths: Vec<String>) -> Result<(), String> {
     let vault_path = expand_tilde(&vault_path);
-    let expanded_paths: Vec<String> = paths
-        .into_iter()
-        .map(|path| expand_tilde(&path).into_owned())
-        .collect();
+    let expanded_paths = expand_tilde_paths(paths);
     crate::ai_chat_images::delete_ai_chat_images(vault_path.as_ref(), &expanded_paths)
 }
 

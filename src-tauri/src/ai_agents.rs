@@ -160,6 +160,18 @@ impl AiAgentStreamRequest {
     fn permission_mode(&self) -> AiAgentPermissionMode {
         self.permission_mode.unwrap_or_default()
     }
+
+    fn prepare_attachments(&mut self) -> Result<(), String> {
+        if self.attachments.is_empty() {
+            return Ok(());
+        }
+        let attachments = std::mem::take(&mut self.attachments);
+        let validated =
+            crate::ai_chat_images::validate_staged_attachments(&self.vault_path, &attachments)?;
+        self.message =
+            crate::ai_chat_images::append_attachments_to_message(&self.message, &validated);
+        Ok(())
+    }
 }
 
 /// Probe every supported AI-agent CLI in parallel.
@@ -225,18 +237,6 @@ fn missing_availability() -> AiAgentAvailability {
     }
 }
 
-fn prepare_request_attachments(request: &mut AiAgentStreamRequest) -> Result<(), String> {
-    if request.attachments.is_empty() {
-        return Ok(());
-    }
-    let attachments = std::mem::take(&mut request.attachments);
-    let validated =
-        crate::ai_chat_images::validate_staged_attachments(&request.vault_path, &attachments)?;
-    request.message =
-        crate::ai_chat_images::append_attachments_to_message(&request.message, &validated);
-    Ok(())
-}
-
 pub fn run_ai_agent_stream<F>(
     mut request: AiAgentStreamRequest,
     emit: F,
@@ -244,7 +244,7 @@ pub fn run_ai_agent_stream<F>(
 where
     F: FnMut(AiAgentStreamEvent),
 {
-    prepare_request_attachments(&mut request)?;
+    request.prepare_attachments()?;
     let permission_mode = request.permission_mode();
     dispatch_ai_agent_stream(request, permission_mode, emit)
 }
@@ -438,12 +438,12 @@ mod tests {
         let mut request: AiAgentStreamRequest = serde_json::from_value(json).unwrap();
         assert!(request.attachments.is_empty());
 
-        prepare_request_attachments(&mut request).unwrap();
+        request.prepare_attachments().unwrap();
         assert_eq!(request.message, "Summarize my notes");
     }
 
     #[test]
-    fn prepare_request_attachments_preserves_order_and_is_idempotent() {
+    fn prepare_attachments_preserves_order_and_is_idempotent() {
         let vault = tempfile::TempDir::new().unwrap();
         let vault_path = vault.path().to_string_lossy().into_owned();
         let tmp_dir = crate::ai_chat_images::ai_chat_tmp_dir(&vault_path);
@@ -468,7 +468,7 @@ mod tests {
             ],
         };
 
-        prepare_request_attachments(&mut request).unwrap();
+        request.prepare_attachments().unwrap();
         let once = request.message.clone();
         let first_idx = once.find("1-first.png").unwrap();
         let second_idx = once.find("2-second.jpg").unwrap();
@@ -479,7 +479,7 @@ mod tests {
             first.to_string_lossy().into_owned(),
             second.to_string_lossy().into_owned(),
         ];
-        prepare_request_attachments(&mut request).unwrap();
+        request.prepare_attachments().unwrap();
         assert_eq!(request.message, once);
     }
 

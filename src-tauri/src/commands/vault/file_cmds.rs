@@ -52,27 +52,43 @@ fn with_requested_root_path<T>(
     with_requested_root(raw_vault_path.as_ref(), action)
 }
 
+pub(crate) enum ImageAssetScope {
+    VaultRoot,
+    #[cfg(desktop)]
+    SavedFileDir,
+}
+
 fn sync_image_asset_scope(
     app_handle: &tauri::AppHandle,
-    requested_root: &str,
+    dir_path: &Path,
+    recursive: bool,
 ) -> Result<(), String> {
     #[cfg(desktop)]
-    crate::sync_vault_asset_scope(app_handle, Path::new(requested_root))?;
+    crate::sync_directory_asset_scope(app_handle, dir_path, recursive)?;
     #[cfg(not(desktop))]
-    let _ = requested_root;
-    #[cfg(not(desktop))]
-    let _ = app_handle;
+    let _ = (app_handle, dir_path, recursive);
     Ok(())
 }
 
-fn with_image_asset_scope(
+pub(crate) fn with_image_asset_scope(
     app_handle: &tauri::AppHandle,
     vault_path: &Path,
+    scope: ImageAssetScope,
     action: impl FnOnce(&str) -> Result<String, String>,
 ) -> Result<String, String> {
     with_requested_root_path(vault_path, |requested_root| {
         let saved_path = action(requested_root)?;
-        sync_image_asset_scope(app_handle, requested_root)?;
+        match scope {
+            ImageAssetScope::VaultRoot => {
+                sync_image_asset_scope(app_handle, Path::new(requested_root), true)?;
+            }
+            #[cfg(desktop)]
+            ImageAssetScope::SavedFileDir => {
+                if let Some(dir) = Path::new(&saved_path).parent() {
+                    sync_image_asset_scope(app_handle, dir, false)?;
+                }
+            }
+        }
         Ok(saved_path)
     })
 }
@@ -83,7 +99,7 @@ pub fn sync_vault_asset_scope_for_window(
     vault_path: PathBuf,
 ) -> Result<(), String> {
     with_requested_root_path(vault_path.as_path(), |requested_root| {
-        sync_image_asset_scope(&app_handle, requested_root)
+        sync_image_asset_scope(&app_handle, Path::new(requested_root), true)
     })
 }
 
@@ -411,9 +427,12 @@ pub fn save_image(
     filename: String,
     data: String,
 ) -> Result<String, String> {
-    with_image_asset_scope(&app_handle, vault_path.as_path(), |requested_root| {
-        vault::save_image(requested_root, &filename, &data)
-    })
+    with_image_asset_scope(
+        &app_handle,
+        vault_path.as_path(),
+        ImageAssetScope::VaultRoot,
+        |requested_root| vault::save_image(requested_root, &filename, &data),
+    )
 }
 
 #[tauri::command]
@@ -422,9 +441,14 @@ pub fn copy_image_to_vault(
     vault_path: PathBuf,
     source_path: PathBuf,
 ) -> Result<String, String> {
-    with_image_asset_scope(&app_handle, vault_path.as_path(), |requested_root| {
-        vault::copy_image_to_vault(requested_root, source_path.to_string_lossy().as_ref())
-    })
+    with_image_asset_scope(
+        &app_handle,
+        vault_path.as_path(),
+        ImageAssetScope::VaultRoot,
+        |requested_root| {
+            vault::copy_image_to_vault(requested_root, source_path.to_string_lossy().as_ref())
+        },
+    )
 }
 
 #[tauri::command]
@@ -434,9 +458,12 @@ pub async fn download_remote_image_to_vault(
     url: String,
 ) -> Result<String, String> {
     crate::commands::blocking::run_blocking_labeled("Remote image task failed", move || {
-        with_image_asset_scope(&app_handle, vault_path.as_path(), |requested_root| {
-            vault::download_remote_image(requested_root, &url)
-        })
+        with_image_asset_scope(
+            &app_handle,
+            vault_path.as_path(),
+            ImageAssetScope::VaultRoot,
+            |requested_root| vault::download_remote_image(requested_root, &url),
+        )
     })
     .await?
 }

@@ -1,4 +1,4 @@
-use super::image::prepare_attachment_path;
+use super::image::{prepare_attachment_path, MAX_IMAGE_BYTES};
 use reqwest::blocking::{Client, Response};
 use reqwest::header::{CONTENT_LENGTH, CONTENT_TYPE, LOCATION};
 use reqwest::{StatusCode, Url};
@@ -8,7 +8,6 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr, ToSocketAddrs};
 use std::path::Path;
 use std::time::Duration;
 
-const MAX_IMAGE_BYTES: u64 = 15 * 1024 * 1024;
 const MAX_REDIRECTS: usize = 5;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);

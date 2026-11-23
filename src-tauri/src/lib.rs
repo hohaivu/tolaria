@@ -54,7 +54,7 @@ mod window_state;
 mod workspace_colors;
 
 #[cfg(desktop)]
-pub(crate) use asset_scope::{sync_ai_chat_tmp_asset_scope, sync_vault_asset_scope};
+pub(crate) use asset_scope::{sync_directory_asset_scope, sync_vault_asset_scope};
 #[cfg(desktop)]
 pub(crate) use desktop_runtime::sync_ws_bridge_for_vault;
 

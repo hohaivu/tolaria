@@ -29,7 +29,7 @@ pub(crate) fn missing_asset_scope_roots(
         .collect()
 }
 
-fn sync_directory_asset_scope(
+pub(crate) fn sync_directory_asset_scope(
     app_handle: &tauri::AppHandle,
     dir_path: &Path,
     recursive: bool,
@@ -63,11 +63,4 @@ pub(crate) fn sync_vault_asset_scope(
     vault_path: &Path,
 ) -> Result<(), String> {
     sync_directory_asset_scope(app_handle, vault_path, true)
-}
-
-pub(crate) fn sync_ai_chat_tmp_asset_scope(
-    app_handle: &tauri::AppHandle,
-    tmp_dir: &Path,
-) -> Result<(), String> {
-    sync_directory_asset_scope(app_handle, tmp_dir, false)
 }

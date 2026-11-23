@@ -1,6 +1,24 @@
+use base64::Engine;
 use std::fs;
-use std::path::Path;
-use std::time::UNIX_EPOCH;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+pub(crate) const MAX_IMAGE_BYTES: u64 = 15 * 1024 * 1024;
+static LAST_IMAGE_MILLIS: AtomicU64 = AtomicU64::new(0);
+
+fn next_image_timestamp_millis() -> u64 {
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| u64::try_from(duration.as_millis()).unwrap_or(u64::MAX))
+        .unwrap_or(0);
+    let mut chosen = now_ms;
+    let _ = LAST_IMAGE_MILLIS.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |prev| {
+        chosen = now_ms.max(prev.saturating_add(1));
+        Some(chosen)
+    });
+    chosen
+}
 
 /// Check if a character is safe for use in filenames (alphanumeric, dot, dash, underscore).
 fn is_safe_filename_char(c: char) -> bool {
@@ -14,6 +32,35 @@ pub(crate) fn sanitize_filename(name: &str) -> String {
         .collect()
 }
 
+pub(crate) fn has_allowed_image_extension(path: &Path, allowed: &[&str]) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| {
+            allowed
+                .iter()
+                .any(|candidate| ext.eq_ignore_ascii_case(candidate))
+        })
+}
+
+pub(crate) fn decode_base64_image(data: &str) -> Result<Vec<u8>, String> {
+    base64::engine::general_purpose::STANDARD
+        .decode(data)
+        .map_err(|error| format!("Invalid base64 data: {error}"))
+}
+
+pub(crate) fn unique_image_path(dir: &Path, filename: &str) -> PathBuf {
+    let basename = Path::new(filename)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(filename);
+    let unique_name = format!(
+        "{}-{}",
+        next_image_timestamp_millis(),
+        sanitize_filename(basename)
+    );
+    dir.join(unique_name)
+}
+
 /// Image file extensions considered valid for drag-drop import.
 const IMAGE_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "gif", "webp", "svg", "bmp", "tiff"];
 
@@ -21,29 +68,19 @@ const IMAGE_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "gif", "webp", "svg", 
 pub(super) fn prepare_attachment_path(
     vault_path: &str,
     filename: &str,
-) -> Result<std::path::PathBuf, String> {
+) -> Result<PathBuf, String> {
     let attachments_dir = Path::new(vault_path).join("attachments");
     fs::create_dir_all(&attachments_dir)
         .map_err(|e| format!("Failed to create attachments directory: {}", e))?;
 
-    let timestamp = std::time::SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
-    let unique_name = format!("{}-{}", timestamp, sanitize_filename(filename));
-    Ok(attachments_dir.join(unique_name))
+    Ok(unique_image_path(&attachments_dir, filename))
 }
 
 /// Save an uploaded image to the vault's attachments directory.
 /// Returns the absolute path to the saved file.
 pub fn save_image(vault_path: &str, filename: &str, data: &str) -> Result<String, String> {
-    use base64::Engine;
-
     let target_path = prepare_attachment_path(vault_path, filename)?;
-
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(data)
-        .map_err(|e| format!("Invalid base64 data: {}", e))?;
+    let bytes = decode_base64_image(data)?;
 
     fs::write(&target_path, bytes).map_err(|e| format!("Failed to write image: {}", e))?;
 
@@ -59,12 +96,7 @@ pub fn copy_image_to_vault(vault_path: &str, source_path: &str) -> Result<String
         return Err(format!("Source file does not exist: {}", source_path));
     }
 
-    let ext = source
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_lowercase();
-    if !IMAGE_EXTENSIONS.contains(&ext.as_str()) {
+    if !has_allowed_image_extension(source, IMAGE_EXTENSIONS) {
         return Err(format!("Not a supported image format: {}", source_path));
     }
 

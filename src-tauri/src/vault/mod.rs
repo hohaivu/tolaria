@@ -43,7 +43,9 @@ pub use file::{create_note_content, get_note_content, note_content_matches, save
 pub use folders::{delete_folder, rename_folder, FolderRenameResult};
 pub use getting_started::{create_getting_started_vault, default_vault_path, vault_exists};
 pub use ignored::{filter_gitignored_entries, filter_gitignored_folders, filter_gitignored_paths};
-pub(crate) use image::sanitize_filename;
+pub(crate) use image::{
+    decode_base64_image, has_allowed_image_extension, unique_image_path, MAX_IMAGE_BYTES,
+};
 pub use image::{copy_image_to_vault, save_image};
 pub use migration::migrate_is_a_to_type;
 pub use remote_image::download_remote_image;

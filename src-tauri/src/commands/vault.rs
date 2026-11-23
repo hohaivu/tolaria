@@ -10,6 +10,7 @@ mod view_cmds;
 
 pub use attachment_cmds::*;
 pub(super) use boundary::VaultBoundary;
+pub(crate) use file_cmds::{with_image_asset_scope, ImageAssetScope};
 pub use file_cmds::*;
 pub use frontmatter_cmds::*;
 pub use layout_cmds::*;

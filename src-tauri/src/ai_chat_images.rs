@@ -1,11 +1,10 @@
-use base64::Engine;
+use crate::vault::{
+    decode_base64_image, has_allowed_image_extension, unique_image_path, MAX_IMAGE_BYTES,
+};
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
 
-pub(crate) const AI_CHAT_IMAGE_MAX_BYTES: u64 = 15 * 1024 * 1024;
 const ALLOWED_IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp"];
 pub(crate) const ERROR_UNSUPPORTED_TYPE: &str = "unsupported_type";
 pub(crate) const ERROR_TOO_LARGE: &str = "too_large";
@@ -15,35 +14,13 @@ const TMP_SUBDIR: &str = "tmp";
 const GIT_EXCLUDE_ENTRY: &str = ".tolaria/";
 const ATTACHED_IMAGES_HEADER: &str = "Attached images (open each file with your file-read tool):";
 
-static LAST_STAGE_MILLIS: AtomicU64 = AtomicU64::new(0);
-
 /// Returns the `<vault>/.tolaria/tmp` directory path for staged AI chat images.
 pub(crate) fn ai_chat_tmp_dir(vault_path: &str) -> PathBuf {
     Path::new(vault_path).join(TOLARIA_DIR).join(TMP_SUBDIR)
 }
 
-fn next_stage_millis() -> u64 {
-    let now_ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| u64::try_from(duration.as_millis()).unwrap_or(u64::MAX))
-        .unwrap_or(0);
-    let mut chosen = now_ms;
-    let _ = LAST_STAGE_MILLIS.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |prev| {
-        chosen = now_ms.max(prev.saturating_add(1));
-        Some(chosen)
-    });
-    chosen
-}
-
 fn validate_image_extension(path: &Path) -> Result<(), String> {
-    let ext = path
-        .extension()
-        .and_then(|value| value.to_str())
-        .ok_or_else(|| ERROR_UNSUPPORTED_TYPE.to_string())?;
-    if ALLOWED_IMAGE_EXTENSIONS
-        .iter()
-        .any(|allowed| ext.eq_ignore_ascii_case(allowed))
-    {
+    if has_allowed_image_extension(path, ALLOWED_IMAGE_EXTENSIONS) {
         Ok(())
     } else {
         Err(ERROR_UNSUPPORTED_TYPE.to_string())
@@ -51,10 +28,22 @@ fn validate_image_extension(path: &Path) -> Result<(), String> {
 }
 
 fn validate_image_size(size_bytes: u64) -> Result<(), String> {
-    if size_bytes > AI_CHAT_IMAGE_MAX_BYTES {
+    if size_bytes > MAX_IMAGE_BYTES {
         Err(ERROR_TOO_LARGE.to_string())
     } else {
         Ok(())
+    }
+}
+
+fn is_staged_file_in_tmp_dir(canonical_path: &Path, canonical_tmp_dir: &Path) -> bool {
+    canonical_path.is_file() && canonical_path.parent() == Some(canonical_tmp_dir)
+}
+
+fn remove_file_if_present(path: &Path, err_context: &str) -> Result<(), String> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("{err_context}: {error}")),
     }
 }
 
@@ -98,14 +87,7 @@ fn prepare_staging_target(vault_path: &str, filename: &str) -> Result<PathBuf, S
     fs::create_dir_all(&tmp_dir)
         .map_err(|error| format!("Failed to create AI chat temp directory: {error}"))?;
     ensure_git_info_exclude(Path::new(vault_path))?;
-
-    let basename = Path::new(filename)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or(filename);
-    let sanitized = crate::vault::sanitize_filename(basename);
-    let unique_name = format!("{}-{sanitized}", next_stage_millis());
-    Ok(tmp_dir.join(unique_name))
+    Ok(unique_image_path(&tmp_dir, filename))
 }
 
 /// Decodes and validates a base64 image payload, then stages it inside `<vault>/.tolaria/tmp/`.
@@ -115,9 +97,7 @@ pub fn stage_ai_chat_image(
     data_base64: &str,
 ) -> Result<String, String> {
     validate_image_extension(Path::new(filename))?;
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(data_base64)
-        .map_err(|error| format!("Invalid base64 data: {error}"))?;
+    let bytes = decode_base64_image(data_base64)?;
     validate_image_size(bytes.len() as u64)?;
 
     let target_path = prepare_staging_target(vault_path, filename)?;
@@ -159,16 +139,8 @@ pub fn delete_ai_chat_images(vault_path: &str, paths: &[String]) -> Result<(), S
         let Ok(canonical_path) = fs::canonicalize(Path::new(raw_path)) else {
             continue;
         };
-        if canonical_path.is_file()
-            && canonical_path.parent() == Some(canonical_tmp_dir.as_path())
-        {
-            match fs::remove_file(&canonical_path) {
-                Ok(()) => {}
-                Err(error) if error.kind() == ErrorKind::NotFound => {}
-                Err(error) => {
-                    return Err(format!("Failed to delete staged image: {error}"));
-                }
-            }
+        if is_staged_file_in_tmp_dir(&canonical_path, &canonical_tmp_dir) {
+            remove_file_if_present(&canonical_path, "Failed to delete staged image")?;
         }
     }
 
@@ -194,13 +166,7 @@ pub fn clear_ai_chat_images(vault_path: &str) -> Result<(), String> {
             .file_type()
             .map_err(|error| format!("Failed to inspect AI chat temp entry type: {error}"))?;
         if file_type.is_file() || file_type.is_symlink() {
-            match fs::remove_file(entry.path()) {
-                Ok(()) => {}
-                Err(error) if error.kind() == ErrorKind::NotFound => {}
-                Err(error) => {
-                    return Err(format!("Failed to clear staged image: {error}"));
-                }
-            }
+            remove_file_if_present(&entry.path(), "Failed to clear staged image")?;
         }
     }
 
@@ -223,9 +189,7 @@ pub(crate) fn validate_staged_attachments(
     for raw_path in attachments {
         let canonical_path = fs::canonicalize(Path::new(raw_path))
             .map_err(|_| format!("Attached image does not exist: {raw_path}"))?;
-        if !canonical_path.is_file()
-            || canonical_path.parent() != Some(canonical_tmp_dir.as_path())
-        {
+        if !is_staged_file_in_tmp_dir(&canonical_path, &canonical_tmp_dir) {
             return Err(format!(
                 "Attached image must be inside .tolaria/tmp: {raw_path}"
             ));
