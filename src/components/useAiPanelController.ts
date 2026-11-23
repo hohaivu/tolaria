@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
 import type { AiAgentId, AiAgentReadiness } from '../lib/aiAgents'
-import { collectMessageImages, deleteAiChatImages } from '../lib/aiChatImages'
+import { collectMessageImages, releaseUnownedImages } from '../lib/aiChatImages'
+import { aiWorkspaceSessionIds } from '../lib/aiWorkspaceSessionStore'
 import type { AiTarget } from '../lib/aiTargets'
 import type { AppLocale } from '../lib/i18n'
 import { trackAiAgentPermissionModeChanged } from '../lib/productAnalytics'
@@ -53,6 +54,8 @@ export interface AiPanelController {
   handleNavigateWikilink: (target: string) => void
   handlePermissionModeChange: (mode: AiAgentPermissionMode) => void
   handleNewChat: () => void
+  /** Clears the transcript and releases its images and draft; keeps the input text. */
+  resetConversation: () => void
 }
 
 function resolveAgentReady(readiness: AiAgentReadiness | undefined, ready: boolean): boolean {
@@ -174,15 +177,17 @@ function useAiPanelActions({
     if (isActive) agent.stopMessage()
   }, [agent, isActive])
   const handleNavigateWikilink = useCallback((target: string) => onOpenNote?.(target), [onOpenNote])
-  const handleNewChat = useCallback(() => {
-    void deleteAiChatImages(vaultPath, [
-      ...collectMessageImages(agent.messages),
-      ...composerImages.discardImages(),
-    ])
+  const resetConversation = useCallback(() => {
+    const candidates = [...collectMessageImages(agent.messages), ...composerImages.discardImages()]
     agent.clearConversation()
+    // After clearing, so this session no longer owns its images; forks that share them keep them.
+    releaseUnownedImages(vaultPath, candidates, aiWorkspaceSessionIds())
+  }, [agent, composerImages, vaultPath])
+  const handleNewChat = useCallback(() => {
+    resetConversation()
     setInput('')
-  }, [agent, composerImages, setInput, vaultPath])
-  return { handleSend, handleStop, handleNavigateWikilink, handleNewChat }
+  }, [resetConversation, setInput])
+  return { handleSend, handleStop, handleNavigateWikilink, handleNewChat, resetConversation }
 }
 
 export function useAiPanelController(options: UseAiPanelControllerArgs): AiPanelController {
@@ -213,7 +218,7 @@ export function useAiPanelController(options: UseAiPanelControllerArgs): AiPanel
     sessionId,
   })
   const isActive = agent.status === 'thinking' || agent.status === 'tool-executing'
-  const { handleSend, handleStop, handleNavigateWikilink, handleNewChat } = useAiPanelActions({
+  const { handleSend, handleStop, handleNavigateWikilink, handleNewChat, resetConversation } = useAiPanelActions({
     agent,
     composerImages,
     isActive,
@@ -244,5 +249,6 @@ export function useAiPanelController(options: UseAiPanelControllerArgs): AiPanel
     handleNavigateWikilink,
     handlePermissionModeChange,
     handleNewChat,
+    resetConversation,
   }
 }

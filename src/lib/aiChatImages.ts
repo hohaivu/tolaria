@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { isTauri, mockInvoke } from '../mock-tauri'
 import type { AiAgentMessage } from './aiAgentConversation'
-import { aiWorkspaceSessionSnapshot } from './aiWorkspaceSessionStore'
+import { aiWorkspaceSessionSnapshot, setAiWorkspaceSessionReleased } from './aiWorkspaceSessionStore'
 import { bytesToBase64 } from './vaultBackend/commandVaultBackend'
 import { extensionFromFilename, isHeicFilename } from '../utils/imageFilenames'
 
@@ -26,8 +26,6 @@ const clearedVaultPaths = new Set<string>()
 const sessionDraftImages = new Map<string, string[]>()
 const sessionDraftListeners = new Map<string, Set<() => void>>()
 const sessionDraftEpochs = new Map<string, number>()
-// Closed sessions keep their message paths (history shows placeholders) but no longer own the files.
-const releasedSessionIds = new Set<string>()
 
 export interface AttachImagesPayload {
   files?: File[]
@@ -123,18 +121,28 @@ export async function stageAiChatImageFromPath(vaultPath: string, sourcePath: st
   })
 }
 
-export async function deleteAiChatImages(vaultPath: string, paths: readonly string[]): Promise<void> {
-  const trimmedVault = vaultPath.trim()
-  const uniquePaths = Array.from(new Set(paths.map((path) => path.trim()).filter(Boolean)))
-  if (!trimmedVault || uniquePaths.length === 0) return
+const STAGED_IMAGE_PATH = /^(.+)[\\/]\.tolaria[\\/]tmp[\\/][^\\/]+$/
 
-  try {
-    await callCommand<void>('delete_ai_chat_images', {
-      vaultPath: trimmedVault,
-      paths: uniquePaths,
-    })
-  } catch (error) {
-    console.warn('[ai-chat-images] Failed to delete staged images:', error)
+/** A staged file lives at `<vault>/.tolaria/tmp/<file>`: that vault, not the active editor vault, owns it. */
+function stagingVaultOf(path: string, fallbackVault: string): string {
+  return STAGED_IMAGE_PATH.exec(path)?.[1] ?? fallbackVault
+}
+
+export async function deleteAiChatImages(vaultPath: string, paths: readonly string[]): Promise<void> {
+  const fallbackVault = vaultPath.trim()
+  const pathsByVault = new Map<string, Set<string>>()
+  for (const path of paths.map((entry) => entry.trim()).filter(Boolean)) {
+    const vault = stagingVaultOf(path, fallbackVault)
+    if (!vault) continue
+    pathsByVault.set(vault, (pathsByVault.get(vault) ?? new Set()).add(path))
+  }
+
+  for (const [vault, vaultPaths] of pathsByVault) {
+    try {
+      await callCommand<void>('delete_ai_chat_images', { vaultPath: vault, paths: Array.from(vaultPaths) })
+    } catch (error) {
+      console.warn('[ai-chat-images] Failed to delete staged images:', error)
+    }
   }
 }
 
@@ -207,16 +215,18 @@ function takeSessionDraftImages(sessionId: string): string[] {
 }
 
 function sessionImagePaths(sessionId: string): string[] {
-  if (releasedSessionIds.has(sessionId)) return []
+  const session = aiWorkspaceSessionSnapshot(sessionId)
+  // Closed sessions keep their message paths (history shows placeholders) but no longer own the files.
+  if (session.released) return []
   return [
-    ...collectMessageImages(aiWorkspaceSessionSnapshot(sessionId).messages),
+    ...collectMessageImages(session.messages),
     ...getSessionDraftImages(sessionId),
   ]
 }
 
 /** A restored conversation owns the files its messages reference again. */
 export function reclaimSessionImages(sessionId: string): void {
-  releasedSessionIds.delete(sessionId)
+  setAiWorkspaceSessionReleased(sessionId, false)
 }
 
 /** Deletes the candidates that no owner session references any more. */
@@ -242,7 +252,7 @@ export function cleanupClosedConversationImages(
   const closedMessageImages = collectMessageImages(aiWorkspaceSessionSnapshot(closedSessionId).messages)
   retireSessionDraft(closedSessionId)
   const closedDraftImages = takeSessionDraftImages(closedSessionId)
-  releasedSessionIds.add(closedSessionId)
+  if (closedMessageImages.length > 0) setAiWorkspaceSessionReleased(closedSessionId, true)
   releaseUnownedImages(
     vaultPath,
     [...closedMessageImages, ...closedDraftImages],

@@ -198,10 +198,11 @@ export function AiPanelView(options: AiPanelViewProps) {
         handleNavigateWikilink,
         handlePermissionModeChange,
         handleNewChat,
+        resetConversation,
       } = controller
 
       useAiPanelPromptQueue({
-        agent,
+        agent: { clearConversation: resetConversation, sendMessage: agent.sendMessage },
         currentTargetId: targetId,
         input,
         isActive,
@@ -219,11 +220,9 @@ export function AiPanelView(options: AiPanelViewProps) {
       })
       const handleComposerSend = useCallback(
         (text: string, references: Parameters<typeof handleSend>[1]) => {
-          const hasImages = (controller.composerImages?.images.length ?? 0) > 0
-          if ((!text.trim() && !hasImages) || isActive) return
           handleSend(text, references, () => onSendPrompt?.(text))
         },
-        [controller.composerImages?.images.length, handleSend, isActive, onSendPrompt],
+        [handleSend, onSendPrompt],
       )
 
       return (

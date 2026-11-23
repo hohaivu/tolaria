@@ -59,6 +59,14 @@ describe('pickFolder', () => {
     expect(window.prompt).toHaveBeenCalledWith('Enter folder path:')
   })
 
+  it('returns a native path byte-for-byte, including a trailing space', async () => {
+    vi.mocked(isTauri).mockReturnValue(true)
+    openMock.mockResolvedValue('/Users/test/Vault ')
+
+    expect(await pickFolder('Select vault')).toBe('/Users/test/Vault ')
+    expect(normalizeDialogPaths(['/Users/test/Vault '])).toEqual(['/Users/test/Vault '])
+  })
+
   it('normalizes file URLs returned by the browser fallback prompt', async () => {
     vi.mocked(isTauri).mockReturnValue(false)
     vi.spyOn(window, 'prompt').mockReturnValue('file:///Users/test/My%20Vault')

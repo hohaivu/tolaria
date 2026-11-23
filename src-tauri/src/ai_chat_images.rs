@@ -265,7 +265,13 @@ pub(crate) fn append_attachments_to_message(message: &str, validated_paths: &[St
         block.push_str(path);
     }
 
-    if message.contains(&block) {
+    // Only a whole block counts: a longer filename sharing the prefix must not satisfy it.
+    let has_block = message.match_indices(&block).any(|(start, _)| {
+        let end = start + block.len();
+        (start == 0 || message.as_bytes()[start - 1] == b'\n')
+            && (end == message.len() || message.as_bytes()[end] == b'\n')
+    });
+    if has_block {
         return message.to_string();
     }
     if message.trim().is_empty() {

@@ -142,6 +142,43 @@ describe('useAiComposerImages', () => {
     expect(result.current.images).toEqual([])
     expect(deleteImagesMock).not.toHaveBeenCalled()
   })
+  describe('session-less draft across a vault switch', () => {
+    it('cleans up pre-existing draft images under the old vault and starts the new vault empty', async () => {
+      stagePathMock.mockResolvedValueOnce('/vaultA/.tolaria/tmp/1-a.png')
+      const { result, rerender } = renderHook(
+        ({ vaultPath }) => useAiComposerImages({ vaultPath }),
+        { initialProps: { vaultPath: '/vaultA' } },
+      )
+      await act(async () => { await result.current.attachImages({ paths: ['/tmp/a.png'] }) })
+      expect(result.current.images).toEqual(['/vaultA/.tolaria/tmp/1-a.png'])
+
+      rerender({ vaultPath: '/vaultB' })
+
+      expect(result.current.images).toEqual([])
+      expect(deleteImagesMock).toHaveBeenCalledWith('/vaultA', ['/vaultA/.tolaria/tmp/1-a.png'])
+    })
+
+    it('discards staging that resolves after the switch instead of admitting it to the new draft', async () => {
+      let resolveStage!: (path: string) => void
+      stagePathMock.mockReturnValueOnce(new Promise<string>((resolve) => { resolveStage = resolve }))
+      const { result, rerender } = renderHook(
+        ({ vaultPath }) => useAiComposerImages({ vaultPath }),
+        { initialProps: { vaultPath: '/vaultA' } },
+      )
+
+      let pending!: Promise<void>
+      act(() => { pending = result.current.attachImages({ paths: ['/tmp/late.png'] }) })
+      rerender({ vaultPath: '/vaultB' })
+      await act(async () => {
+        resolveStage('/vaultA/.tolaria/tmp/late.png')
+        await pending
+      })
+
+      expect(result.current.images).toEqual([])
+      expect(deleteImagesMock).toHaveBeenCalledWith('/vaultA', ['/vaultA/.tolaria/tmp/late.png'])
+    })
+  })
+
   describe('staging that resolves after the draft was retired', () => {
     function deferStaging() {
       let resolveStage!: (path: string) => void

@@ -460,6 +460,18 @@ fn append_attachments_to_message_handles_empty_order_and_idempotency() {
     assert_eq!(append_attachments_to_message(&with_text, &paths), with_text);
 }
 
+#[test]
+fn append_attachments_to_message_ignores_a_longer_path_sharing_the_prefix() {
+    let paths = vec!["/vault/.tolaria/tmp/1-shot.png".to_string()];
+    let block = "Attached images (open each file with your file-read tool):\n- /vault/.tolaria/tmp/1-shot.png";
+    let lookalike = format!("{block}.bak");
+
+    let appended = append_attachments_to_message(&lookalike, &paths);
+
+    assert_eq!(appended, format!("{lookalike}\n\n{block}"));
+    assert_eq!(append_attachments_to_message(&appended, &paths), appended);
+}
+
 fn run_real_agent_image_check(agent: AiAgentId, label: &str) -> (Result<String, String>, String, Vec<String>) {
     let vault = TempDir::new().unwrap();
     init_git_repo(vault.path());

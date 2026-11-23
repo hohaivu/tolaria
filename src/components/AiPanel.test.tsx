@@ -7,6 +7,7 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 import type { AiPanelController } from './useAiPanelController'
 import type { VaultEntry } from '../types'
 import { queueAiPrompt } from '../utils/aiPromptBridge'
+import { resetAiWorkspaceSessionStoreForTests, setAiWorkspaceSessionMessages } from '../lib/aiWorkspaceSessionStore'
 import type { NoteReference } from '../utils/ai-context'
 import { bindVaultConfigStore, getVaultConfig, resetVaultConfigStore } from '../utils/vaultConfigStore'
 
@@ -128,6 +129,7 @@ function QueuedPromptTargetHarness({ onTargetChange }: { onTargetChange: (target
     handleNavigateWikilink: vi.fn(),
     handlePermissionModeChange: vi.fn(),
     handleNewChat: vi.fn(),
+    resetConversation: mockClearConversation,
   }
 
   return (
@@ -677,5 +679,61 @@ describe('AiPanel', () => {
     fireEvent.click(screen.getByTestId('agent-send'))
     expect(mockSendMessage).toHaveBeenCalledWith('', [], ['/tmp/vault/.tolaria/tmp/1-blocked.png'])
     expect(screen.getAllByTestId('composer-image-item')).toHaveLength(1)
+  })
+
+  describe('conversation reset releases images by ownership', () => {
+    const shared = '/tmp/vault/.tolaria/tmp/1-shared.png'
+    const sourceOnly = '/tmp/vault/.tolaria/tmp/2-source.png'
+    const draft = '/tmp/vault/.tolaria/tmp/3-draft.png'
+    const deleteSpy = vi.fn(() => null)
+
+    async function renderWithSentAndDraftImages() {
+      window.__mockHandlers = {
+        ...window.__mockHandlers,
+        stage_ai_chat_image: () => draft,
+        delete_ai_chat_images: deleteSpy,
+      }
+      mockMessages = [{ id: 'm1', userMessage: 'img', images: [shared, sourceOnly], actions: [], response: 'ok' }]
+      render(<AiPanel onClose={vi.fn()} vaultPath="/tmp/vault" />)
+      const png = new File(['png'], 'draft.png', { type: 'image/png' })
+      fireEvent.paste(screen.getByTestId('agent-input'), {
+        clipboardData: { getData: vi.fn(() => ''), files: [png], items: [{ kind: 'file', type: 'image/png', getAsFile: () => png }] },
+      })
+      await waitFor(() => { expect(screen.getAllByTestId('composer-image-item')).toHaveLength(1) })
+    }
+
+    beforeEach(() => {
+      deleteSpy.mockClear()
+      resetAiWorkspaceSessionStoreForTests()
+    })
+
+    afterEach(() => {
+      resetAiWorkspaceSessionStoreForTests()
+    })
+
+    it('keeps a sent image that a fork still owns when the source chat is reset', async () => {
+      setAiWorkspaceSessionMessages('chat-fork', [{ id: 'm1', userMessage: 'img', images: [shared], actions: [] }])
+      await renderWithSentAndDraftImages()
+
+      fireEvent.click(screen.getByTitle('New AI chat'))
+
+      await waitFor(() => {
+        expect(deleteSpy).toHaveBeenCalledWith({ vaultPath: '/tmp/vault', paths: [sourceOnly, draft] })
+      })
+      expect(deleteSpy).toHaveBeenCalledTimes(1)
+    })
+
+    it('releases sent and draft images and keeps the request text-only when a palette prompt resets the chat', async () => {
+      await renderWithSentAndDraftImages()
+
+      await act(async () => { queueAiPrompt('summarize', []) })
+
+      await waitFor(() => {
+        expect(deleteSpy).toHaveBeenCalledWith({ vaultPath: '/tmp/vault', paths: [shared, sourceOnly, draft] })
+      })
+      expect(mockClearConversation).toHaveBeenCalledOnce()
+      expect(mockSendMessage).toHaveBeenCalledWith('summarize', [])
+      expect(screen.queryByTestId('composer-image-strip')).toBeNull()
+    })
   })
 })

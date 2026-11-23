@@ -44,21 +44,21 @@ export function formatFolderPickerActionError(
   return message ? `${action}: ${message}` : action
 }
 
+// Native paths are kept byte-for-byte (a folder name may end in a space); only file URLs are decoded.
 function normalizeDialogPath(value: string): string | null {
-  const trimmed = value.trim()
-  if (!trimmed) return null
-  if (!trimmed.startsWith('file://')) return trimmed
+  if (!value) return null
+  if (!value.startsWith('file://')) return value
 
   try {
-    const parsed = new URL(trimmed)
-    if (parsed.protocol !== 'file:') return trimmed
+    const parsed = new URL(value)
+    if (parsed.protocol !== 'file:') return value
 
     const decodedPath = decodeURIComponent(parsed.pathname)
     if (parsed.hostname) return `//${parsed.hostname}${decodedPath}`
     if (/^\/[A-Za-z]:/.test(decodedPath)) return decodedPath.slice(1)
     return decodedPath
   } catch {
-    return trimmed
+    return value
   }
 }
 

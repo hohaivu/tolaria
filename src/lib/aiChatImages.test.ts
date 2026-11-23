@@ -153,9 +153,6 @@ describe('aiChatImages', () => {
 
   it('releases a shared file when the last of two closed owners closes, not before', async () => {
     const shared = '/vault/.tolaria/tmp/1-shared.png'
-    // Released ids are module state that outlives the store reset.
-    reclaimSessionImages('chat-src')
-    reclaimSessionImages('chat-fork')
     setAiWorkspaceSessionMessages('chat-src', [{ id: 'm1', userMessage: 'a', images: [shared], actions: [] }])
     setAiWorkspaceSessionMessages('chat-fork', [{ id: 'm1', userMessage: 'a', images: [shared], actions: [] }])
     invokeMock.mockResolvedValue(null)
@@ -172,9 +169,6 @@ describe('aiChatImages', () => {
 
   it('counts a restored conversation as an owner again', () => {
     const shared = '/vault/.tolaria/tmp/1-shared.png'
-    // Released ids are module state that outlives the store reset.
-    reclaimSessionImages('chat-src')
-    reclaimSessionImages('chat-fork')
     setAiWorkspaceSessionMessages('chat-src', [{ id: 'm1', userMessage: 'a', images: [shared], actions: [] }])
     setAiWorkspaceSessionMessages('chat-fork', [{ id: 'm1', userMessage: 'a', images: [shared], actions: [] }])
 
@@ -183,6 +177,33 @@ describe('aiChatImages', () => {
     cleanupClosedConversationImages('chat-fork', '/vault', ['chat-src'])
 
     expect(invokeMock).not.toHaveBeenCalled()
+  })
+
+  it('deletes a staged file under the vault that staged it, not the active editor vault', async () => {
+    const staged = '/vaultA/.tolaria/tmp/1-shot.png'
+    setAiWorkspaceSessionMessages('chat-a', [{ id: 'm1', userMessage: 'a', images: [staged], actions: [] }])
+    invokeMock.mockResolvedValue(null)
+
+    cleanupClosedConversationImages('chat-a', '/vaultB', [])
+
+    await vi.waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith('delete_ai_chat_images', { vaultPath: '/vaultA', paths: [staged] })
+    })
+    expect(invokeMock).not.toHaveBeenCalledWith('delete_ai_chat_images', expect.objectContaining({ vaultPath: '/vaultB' }))
+  })
+
+  it('sends one delete per staging vault and falls back to the given vault for unrecognised paths', async () => {
+    invokeMock.mockResolvedValue(null)
+
+    await deleteAiChatImages('/vaultB', [
+      '/vaultA/.tolaria/tmp/1-a.png',
+      'C:\\vaultC\\.tolaria\\tmp\\2-c.png',
+      '/elsewhere/3-d.png',
+    ])
+
+    expect(invokeMock).toHaveBeenCalledWith('delete_ai_chat_images', { vaultPath: '/vaultA', paths: ['/vaultA/.tolaria/tmp/1-a.png'] })
+    expect(invokeMock).toHaveBeenCalledWith('delete_ai_chat_images', { vaultPath: 'C:\\vaultC', paths: ['C:\\vaultC\\.tolaria\\tmp\\2-c.png'] })
+    expect(invokeMock).toHaveBeenCalledWith('delete_ai_chat_images', { vaultPath: '/vaultB', paths: ['/elsewhere/3-d.png'] })
   })
 
   it('routes HEIC and HEIF to the chat rejection path as image candidates', () => {

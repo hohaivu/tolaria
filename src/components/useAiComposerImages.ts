@@ -84,6 +84,20 @@ export function useAiComposerImages({
     localEpochRef.current += 1
   }, [])
 
+  // A local draft belongs to one vault: switching vaults retires in-flight staging and cleans up what was staged.
+  const draftVaultRef = useRef(vaultPath)
+  useEffect(() => {
+    if (draftVaultRef.current === vaultPath) return
+    const previousVault = draftVaultRef.current
+    draftVaultRef.current = vaultPath
+    if (sessionId) return
+    localEpochRef.current += 1
+    const stale = imagesRef.current
+    imagesRef.current = EMPTY_IMAGES
+    setLocalImages(EMPTY_IMAGES)
+    void deleteAiChatImages(previousVault, stale)
+  }, [sessionId, vaultPath])
+
   const draftEpoch = useCallback(
     () => (sessionId ? sessionDraftEpoch(sessionId) : localEpochRef.current),
     [sessionId],
