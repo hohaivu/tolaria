@@ -222,4 +222,23 @@ describe('mockHandlers coverage', () => {
       source_path: '/tmp/screenshot.jpg',
     })).toBe('/vault/attachments/12345-screenshot.jpg')
   })
+
+  it('stages, deletes, and clears AI chat attachment paths', async () => {
+    const { mockHandlers } = await loadHandlers()
+    vi.spyOn(Date, 'now').mockReturnValue(67890)
+
+    expect(mockHandlers.stage_ai_chat_image({
+      vaultPath: '/my-vault',
+      filename: 'paste.png',
+      dataBase64: 'ZmFrZQ==',
+    })).toBe('/my-vault/.tolaria/tmp/67890-paste.png')
+
+    expect(mockHandlers.stage_ai_chat_image_from_path({
+      vault_path: '/my-vault',
+      source_path: '/tmp/drop-photo.webp',
+    })).toBe('/my-vault/.tolaria/tmp/67890-drop-photo.webp')
+
+    expect(mockHandlers.delete_ai_chat_images()).toBeNull()
+    expect(mockHandlers.clear_ai_chat_images()).toBeNull()
+  })
 })
