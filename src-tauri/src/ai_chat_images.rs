@@ -15,6 +15,7 @@ const GIT_EXCLUDE_ENTRY: &str = ".tolaria/";
 const ATTACHED_IMAGES_HEADER: &str = "Attached images (open each file with your file-read tool):";
 
 /// Returns the `<vault>/.tolaria/tmp` directory path for staged AI chat images.
+#[cfg(test)]
 pub(crate) fn ai_chat_tmp_dir(vault_path: &str) -> PathBuf {
     Path::new(vault_path).join(TOLARIA_DIR).join(TMP_SUBDIR)
 }

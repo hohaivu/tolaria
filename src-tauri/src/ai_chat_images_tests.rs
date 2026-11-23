@@ -385,7 +385,7 @@ fn linked_tolaria_or_tmp_directory_is_refused_by_every_operation() {
 
         assert!(stage_ai_chat_image(&vault_path, "a.png", &encode_base64(b"a")).is_err());
         assert!(stage_ai_chat_image_from_path(&vault_path, source_file.to_str().unwrap()).is_err());
-        assert!(validate_staged_attachments(&vault_path, &[outside_arg.clone()]).is_err());
+        assert!(validate_staged_attachments(&vault_path, std::slice::from_ref(&outside_arg)).is_err());
         assert!(delete_ai_chat_images(&vault_path, &[outside_arg]).is_err());
         assert!(clear_ai_chat_images(&vault_path).is_err());
 
