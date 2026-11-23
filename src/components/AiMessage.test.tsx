@@ -255,7 +255,8 @@ describe('AiMessage', () => {
     )
 
     const thumbBtn = screen.getByTestId('message-image-thumbnail')
-    expect(thumbBtn).toBeTruthy()
+    expect(thumbBtn).toHaveAttribute('data-slot', 'button')
+    expect(screen.getByRole('button', { name: 'Image preview' })).toBe(thumbBtn)
     const thumbImg = thumbBtn.querySelector('img')
     expect(thumbImg).toHaveAttribute('alt', '1700000000001-diagram.png')
 

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { ImageBroken } from '@phosphor-icons/react'
 import { ImageLightbox } from './ImageLightbox'
+import { Button } from './ui/button'
 import { filenameFromPath } from '../utils/imageFilenames'
 import { createTranslator, type AppLocale } from '../lib/i18n'
 import { safeAttachmentAssetUrlFromPath } from '../utils/vaultAttachments'
@@ -50,14 +51,16 @@ export function AiMessageImages({
               <span className="line-clamp-2 text-[10px] leading-tight">{unavailableLabel}</span>
             </div>
           ) : (
-            <button
+            <Button
               key={path}
               type="button"
+              variant="ghost"
+              size="icon"
               onClick={() => setPreviewPath(path)}
               aria-label={previewTitle}
               title={previewTitle}
               data-testid="message-image-thumbnail"
-              className="h-16 w-16 shrink-0 cursor-pointer overflow-hidden rounded-md border border-border bg-muted p-0 transition-opacity hover:opacity-90"
+              className="h-16 w-16 shrink-0 overflow-hidden rounded-md border border-border bg-muted p-0 hover:bg-muted hover:opacity-90"
             >
               <img
                 src={safeAttachmentAssetUrlFromPath({ path })}
@@ -65,7 +68,7 @@ export function AiMessageImages({
                 className="h-full w-full object-cover"
                 onError={() => markFailed(path)}
               />
-            </button>
+            </Button>
           )
         ))}
       </div>
