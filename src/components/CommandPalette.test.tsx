@@ -564,6 +564,27 @@ describe('CommandPalette', () => {
     expect(onClose).toHaveBeenCalledOnce()
   })
 
+  it('keeps CommandPalette AI mode text-only when pasting an image', () => {
+    render(<CommandPalette open={true} commands={commands} entries={entries} onClose={onClose} />)
+
+    fireEvent.change(screen.getByPlaceholderText('Type a command...'), { target: { value: ' ' } })
+    const editor = screen.getByTestId('command-palette-ai-input')
+    const pngFile = new File(['png'], 'shot.png', { type: 'image/png' })
+    const pasteEvent = new Event('paste', { bubbles: true, cancelable: true })
+    Object.defineProperty(pasteEvent, 'clipboardData', {
+      value: {
+        getData: () => '',
+        files: [pngFile],
+        items: [{ kind: 'file', type: 'image/png' }],
+      },
+    })
+    fireEvent(editor, pasteEvent)
+
+    expect(pasteEvent.defaultPrevented).toBe(true)
+    expect(editor.textContent).not.toContain('shot.png')
+    expect(screen.queryByTestId('composer-image-strip')).toBeNull()
+  })
+
   describe('relevance ranking', () => {
     const relevanceCommands: CommandAction[] = [
       makeCommand({ id: 'create-note', label: 'New Note', group: 'Note' }),

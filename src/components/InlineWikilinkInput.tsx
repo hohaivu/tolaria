@@ -34,17 +34,28 @@ import {
 import {
   containsUnsupportedInlineContent,
   deleteToLineStart,
+  extractClipboardFiles,
   hasUnsupportedClipboardPayload,
   submitInlineValue,
 } from './inlineWikilinkInputOperations'
 import { restorePendingRemountState } from './inlineWikilinkRemountState'
 import { useNativePathDrop } from './useNativePathDrop'
+import { translate, type AppLocale } from '../lib/i18n'
+import {
+  filenameFromPath,
+  isImageAttachmentCandidateFile,
+  isImageAttachmentCandidatePath,
+  type AttachImagesPayload,
+} from '../lib/aiChatImages'
+import { createImageDropClaim } from '../utils/imageDropClaim'
 
 interface InlineWikilinkInputProps {
   entries: VaultEntry[]
   value: string
+  locale?: AppLocale
   onChange: (value: string) => void
   onSubmit?: (text: string, references: NoteReference[]) => void
+  onAttachImages?: (payload: AttachImagesPayload) => void
   onUnsupportedPaste?: (message: string) => void
   submitOnEmpty?: boolean
   disabled?: boolean
@@ -61,7 +72,6 @@ interface InlineWikilinkInputProps {
   paletteFooter?: ReactNode
 }
 
-export const UNSUPPORTED_INLINE_PASTE_MESSAGE = 'Only text paste is supported in the AI composer right now.'
 const POST_COMPOSITION_TEXT_INPUT_SETTLE_MS = 120
 
 function usePostCompositionTextInputSettle() {
@@ -100,8 +110,10 @@ export function InlineWikilinkInput(options: InlineWikilinkInputProps) {
   const {
     entries,
     value,
+    locale = 'en',
     onChange,
     onSubmit,
+    onAttachImages,
     onUnsupportedPaste,
     submitOnEmpty = false,
     disabled = false,
@@ -138,6 +150,7 @@ export function InlineWikilinkInput(options: InlineWikilinkInputProps) {
   const pendingPasteRef = useRef<PendingPasteState | null>(null)
   const pendingCompositionInputRef = useRef(false)
   const handledFileDropRef = useRef(false)
+  const dropClaimRef = useRef(createImageDropClaim())
   const pendingFocusAfterRemountRef = useRef<InlineSelectionRange | null>(null)
   const pendingScrollTopAfterRemountRef = useRef<number | null>(null)
   const {
@@ -187,6 +200,20 @@ export function InlineWikilinkInput(options: InlineWikilinkInputProps) {
     [editorRef, onChange, selectionRange, setSelectionRange, value],
   )
   const insertNativePathDrop = (paths: string[]) => {
+    if (onAttachImages) {
+      const imagePaths = paths.filter(isImageAttachmentCandidatePath)
+      const nonImagePaths = paths.filter((path) => !isImageAttachmentCandidatePath(path))
+      if (imagePaths.length > 0 && dropClaimRef.current.claim({
+        channel: 'native',
+        filenames: imagePaths.map(filenameFromPath),
+      })) {
+        onAttachImages({ paths: imagePaths })
+      }
+      const droppedPathText = formatDroppedPathList(nonImagePaths)
+      if (droppedPathText) insertTransferText(droppedPathText, true)
+      return
+    }
+
     const droppedPathText = formatDroppedPathList(paths)
     if (!droppedPathText) return
 
@@ -198,8 +225,8 @@ export function InlineWikilinkInput(options: InlineWikilinkInputProps) {
     onPathDrop: insertNativePathDrop,
   })
   const notifyUnsupportedPaste = useCallback(
-    () => onUnsupportedPaste?.(UNSUPPORTED_INLINE_PASTE_MESSAGE),
-    [onUnsupportedPaste],
+    () => onUnsupportedPaste?.(translate(locale, 'ai.panel.unsupportedPaste')),
+    [locale, onUnsupportedPaste],
   )
   const recoverUnsupportedMutation = () => {
     pendingCompositionInputRef.current = false
@@ -316,9 +343,31 @@ export function InlineWikilinkInput(options: InlineWikilinkInputProps) {
     editor.addEventListener('beforeinput', handleBeforeInput as EventListener)
     return () => editor.removeEventListener('beforeinput', handleBeforeInput as EventListener)
   }, [editorRef, handleBeforeInput, renderVersion])
+  const handleDragOver = (event: React.DragEvent<HTMLDivElement>) => {
+    if (disabled || !onAttachImages) return
+    if (hasUnsupportedClipboardPayload(event.dataTransfer)) {
+      event.preventDefault()
+    }
+  }
   const handleDrop = (event: React.DragEvent<HTMLDivElement>) => {
     if (disabled) return
     if (!hasUnsupportedClipboardPayload(event.dataTransfer)) return
+
+    if (onAttachImages) {
+      const droppedFiles = Array.from(event.dataTransfer.files ?? [])
+      const imageFiles = droppedFiles.filter(isImageAttachmentCandidateFile)
+      if (imageFiles.length > 0) {
+        handledFileDropRef.current = true
+        event.preventDefault()
+        if (dropClaimRef.current.claim({
+          channel: 'dom',
+          filenames: imageFiles.map((file) => file.name),
+        })) {
+          onAttachImages({ files: imageFiles })
+        }
+        return
+      }
+    }
 
     handledFileDropRef.current = true
     const droppedPathText = extractDroppedPathText(event.dataTransfer)
@@ -333,6 +382,18 @@ export function InlineWikilinkInput(options: InlineWikilinkInputProps) {
   }
   const handlePaste = (event: React.ClipboardEvent<HTMLDivElement>) => {
     if (disabled) return
+
+    if (onAttachImages) {
+      const pastedFiles = extractClipboardFiles(event.clipboardData)
+      const hasImageItem = Array.from(event.clipboardData.items ?? []).some(
+        (item) => item.type.startsWith('image/'),
+      )
+      if (pastedFiles.some(isImageAttachmentCandidateFile) || (hasImageItem && pastedFiles.length > 0)) {
+        event.preventDefault()
+        onAttachImages({ files: pastedFiles })
+        return
+      }
+    }
 
     if (hasUnsupportedClipboardPayload(event.clipboardData)) {
       event.preventDefault()
@@ -500,6 +561,7 @@ export function InlineWikilinkInput(options: InlineWikilinkInputProps) {
       onInput={handleInput}
       onKeyDown={handleKeyDown}
       onCut={cutSelectedContent}
+      onDragOver={handleDragOver}
       onDrop={handleDrop}
       onPaste={handlePaste}
       onSelectionChange={syncSelectionRange}

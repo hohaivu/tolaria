@@ -9,6 +9,19 @@ export function hasUnsupportedClipboardPayload(clipboardData: DataTransfer) {
   return Array.from(clipboardData.items).some((item) => item.kind === 'file' || item.type.startsWith('image/'))
 }
 
+export function extractClipboardFiles(clipboardData: DataTransfer): File[] {
+  const files = Array.from(clipboardData.files ?? [])
+  if (files.length > 0) return files
+
+  const itemFiles: File[] = []
+  for (const item of Array.from(clipboardData.items ?? [])) {
+    if (item.kind !== 'file') continue
+    const file = typeof item.getAsFile === 'function' ? item.getAsFile() : null
+    if (file) itemFiles.push(file)
+  }
+  return itemFiles
+}
+
 export function containsUnsupportedInlineContent(editor: HTMLDivElement) {
   return editor.querySelector('img, picture, video, audio, canvas, figure, iframe, object') !== null
 }
