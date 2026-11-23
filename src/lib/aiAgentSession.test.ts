@@ -626,4 +626,25 @@ describe('aiAgentSession', () => {
     expect(onToast).toHaveBeenCalledWith('OpenAI · GPT-5 nano does not support image attachments.')
     expect(session.getMessages()).toHaveLength(1)
   })
+
+  it('reports only image paths of discarded later turns when regenerating an earlier message', async () => {
+    const kept = '/vault/.tolaria/tmp/1-kept.png'
+    const later = '/vault/.tolaria/tmp/2-later.png'
+    const session = createRuntime([
+      { id: 'msg-a', userMessage: 'first', images: [kept], actions: [], response: 'A' },
+      { id: 'msg-b', userMessage: 'second', images: [later, kept], actions: [], response: 'B' },
+    ])
+    nextMessageIdMock.mockReturnValue('msg-a-regen')
+    const onImagesDiscarded = vi.fn()
+
+    await regenerateAgentMessage({
+      runtime: session.runtime,
+      context: { agent: 'claude_code', ready: true, vaultPath: '/vault', permissionMode: 'safe' },
+      messageId: 'msg-a',
+      onImagesDiscarded,
+    })
+
+    expect(onImagesDiscarded).toHaveBeenCalledTimes(1)
+    expect(onImagesDiscarded).toHaveBeenCalledWith([later])
+  })
 })

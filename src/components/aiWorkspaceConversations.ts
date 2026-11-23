@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 import { arrayMove } from '@dnd-kit/sortable'
 import type { AiAgentId } from '../lib/aiAgents'
-import { cleanupClosedConversationImages } from '../lib/aiChatImages'
+import { cleanupClosedConversationImages, reclaimSessionImages } from '../lib/aiChatImages'
 import { agentTargets, type AiTarget } from '../lib/aiTargets'
 import { translate, type AppLocale } from '../lib/i18n'
 import type { AiWorkspaceConversationSetting } from '../types'
@@ -409,7 +409,7 @@ export function useConversations({
     setConversations(next.conversations)
     setActiveId(next.activeId)
     if (closing && vaultPath) {
-      // Archived chats stay restorable, so they keep owning their images.
+      // An explicitly archived chat stays restorable and keeps owning its images; a closed one releases them.
       const remainingIds = next.conversations
         .filter((conversation) => conversation.id !== id)
         .map((conversation) => conversation.id)
@@ -418,6 +418,7 @@ export function useConversations({
   }, [activeId, conversations, fallbackModelId, fallbackTarget, locale, vaultPath])
 
   const restoreConversation = useCallback((id: ConversationId) => {
+    reclaimSessionImages(id)
     setConversations((current) => restoreConversationState(current, id))
     setActiveId(id)
     setShowArchived(false)

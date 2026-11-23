@@ -198,5 +198,43 @@ describe('useAiComposerImages', () => {
 
       expect(deleteImagesMock).toHaveBeenCalledWith('/vault', ['/vault/.tolaria/tmp/late.png'])
     })
+
+    it('stops a two-image batch when the draft closes while the first entry is staging and rejects', async () => {
+      let rejectStage!: (error: Error) => void
+      stagePathMock.mockReturnValueOnce(new Promise<string>((_, reject) => { rejectStage = reject }))
+      stagePathMock.mockResolvedValue('/vault/.tolaria/tmp/second.png')
+      const onToast = vi.fn()
+      const { result } = renderHook(() => useAiComposerImages({ vaultPath: '/vault', sessionId: 'session-1', onToast }))
+
+      let pending!: Promise<void>
+      act(() => { pending = result.current.attachImages({ paths: ['/tmp/first.png', '/tmp/second.png'] }) })
+      cleanupClosedConversationImages('session-1', '/vault', [])
+      await act(async () => {
+        rejectStage(new Error('boom'))
+        await pending
+      })
+
+      expect(stagePathMock).toHaveBeenCalledTimes(1)
+      expect(getSessionDraftImages('session-1')).toEqual([])
+      expect(onToast).not.toHaveBeenCalled()
+    })
+
+    it('stops a picker selection that returns after the draft was reset', async () => {
+      let resolvePicker!: (paths: string[]) => void
+      dialogOpenMock.mockReturnValueOnce(new Promise<string[]>((resolve) => { resolvePicker = resolve }))
+      const { result } = renderHook(() => useAiComposerImages({ vaultPath: '/vault', sessionId: 'session-1' }))
+
+      let pending!: Promise<void>
+      act(() => { pending = result.current.pickImages() })
+      await vi.waitFor(() => expect(dialogOpenMock).toHaveBeenCalled())
+      act(() => { result.current.discardImages() })
+      await act(async () => {
+        resolvePicker(['/tmp/picked.png'])
+        await pending
+      })
+
+      expect(stagePathMock).not.toHaveBeenCalled()
+      expect(result.current.images).toEqual([])
+    })
   })
 })

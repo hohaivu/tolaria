@@ -18,9 +18,11 @@ import {
   stopAgentMessage,
   type AiAgentSessionRuntime,
 } from '../lib/aiAgentSession'
+import { releaseUnownedImages } from '../lib/aiChatImages'
 import type { ToolInvocation } from '../lib/aiAgentMessageState'
 import {
   aiWorkspaceSessionDispatchers,
+  aiWorkspaceSessionIds,
   aiWorkspaceSessionSnapshot,
   subscribeAiWorkspaceSession,
 } from '../lib/aiWorkspaceSessionStore'
@@ -162,6 +164,7 @@ export function useCliAiAgent(
       runtime,
       context: await buildAgentContext(),
       messageId,
+      onImagesDiscarded: (paths) => releaseUnownedImages(vaultPath, paths, aiWorkspaceSessionIds()),
     })
   }
 

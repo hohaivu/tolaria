@@ -365,6 +365,10 @@ export function aiWorkspaceSessionSnapshot(
 	return snapshot;
 }
 
+export function aiWorkspaceSessionIds(): SessionId[] {
+	return Object.keys(sessionStore.getSnapshot());
+}
+
 export function subscribeAiWorkspaceSession(
 	_sessionId: SessionId,
 	listener: () => void,

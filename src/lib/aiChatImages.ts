@@ -3,7 +3,7 @@ import { isTauri, mockInvoke } from '../mock-tauri'
 import type { AiAgentMessage } from './aiAgentConversation'
 import { aiWorkspaceSessionSnapshot } from './aiWorkspaceSessionStore'
 import { bytesToBase64 } from './vaultBackend/commandVaultBackend'
-import { extensionFromFilename } from '../utils/imageFilenames'
+import { extensionFromFilename, isHeicFilename } from '../utils/imageFilenames'
 
 export const MAX_AI_CHAT_IMAGES = 4
 export const MAX_AI_CHAT_IMAGE_BYTES = 15 * 1024 * 1024
@@ -12,7 +12,7 @@ export const ALLOWED_AI_CHAT_IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'w
 const ALLOWED_EXTENSION_SET = new Set<string>(ALLOWED_AI_CHAT_IMAGE_EXTENSIONS)
 const ALLOWED_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp'])
 const IMAGE_CANDIDATE_EXTENSIONS = new Set([
-  'png', 'jpg', 'jpeg', 'gif', 'webp', 'heic', 'heif', 'bmp', 'svg', 'tif', 'tiff', 'avif', 'ico',
+  'png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'tif', 'tiff', 'avif', 'ico',
 ])
 const MIME_TO_DEFAULT_FILENAME = new Map<string, string>([
   ['image/png', 'image.png'],
@@ -26,6 +26,8 @@ const clearedVaultPaths = new Set<string>()
 const sessionDraftImages = new Map<string, string[]>()
 const sessionDraftListeners = new Map<string, Set<() => void>>()
 const sessionDraftEpochs = new Map<string, number>()
+// Closed sessions keep their message paths (history shows placeholders) but no longer own the files.
+const releasedSessionIds = new Set<string>()
 
 export interface AttachImagesPayload {
   files?: File[]
@@ -44,7 +46,7 @@ function isAllowedAiChatImageExtension(filenameOrPath: string): boolean {
 }
 
 export function isImageAttachmentCandidatePath(path: string): boolean {
-  return IMAGE_CANDIDATE_EXTENSIONS.has(extensionFromFilename(path))
+  return IMAGE_CANDIDATE_EXTENSIONS.has(extensionFromFilename(path)) || isHeicFilename(path)
 }
 
 export function isImageAttachmentCandidateFile(file: File): boolean {
@@ -205,10 +207,31 @@ function takeSessionDraftImages(sessionId: string): string[] {
 }
 
 function sessionImagePaths(sessionId: string): string[] {
+  if (releasedSessionIds.has(sessionId)) return []
   return [
     ...collectMessageImages(aiWorkspaceSessionSnapshot(sessionId).messages),
     ...getSessionDraftImages(sessionId),
   ]
+}
+
+/** A restored conversation owns the files its messages reference again. */
+export function reclaimSessionImages(sessionId: string): void {
+  releasedSessionIds.delete(sessionId)
+}
+
+/** Deletes the candidates that no owner session references any more. */
+export function releaseUnownedImages(
+  vaultPath: string,
+  candidates: readonly string[],
+  ownerSessionIds: readonly string[],
+): void {
+  if (candidates.length === 0) return
+
+  const retained = new Set<string>()
+  for (const sessionId of ownerSessionIds) {
+    for (const path of sessionImagePaths(sessionId)) retained.add(path)
+  }
+  void deleteAiChatImages(vaultPath, candidates.filter((path) => !retained.has(path)))
 }
 
 export function cleanupClosedConversationImages(
@@ -219,19 +242,10 @@ export function cleanupClosedConversationImages(
   const closedMessageImages = collectMessageImages(aiWorkspaceSessionSnapshot(closedSessionId).messages)
   retireSessionDraft(closedSessionId)
   const closedDraftImages = takeSessionDraftImages(closedSessionId)
-  const candidates = [...closedMessageImages, ...closedDraftImages]
-  if (candidates.length === 0) return
-
-  const retained = new Set<string>()
-  for (const sessionId of remainingSessionIds) {
-    if (sessionId === closedSessionId) continue
-    for (const path of sessionImagePaths(sessionId)) {
-      retained.add(path)
-    }
-  }
-
-  void deleteAiChatImages(
+  releasedSessionIds.add(closedSessionId)
+  releaseUnownedImages(
     vaultPath,
-    candidates.filter((path) => !retained.has(path)),
+    [...closedMessageImages, ...closedDraftImages],
+    remainingSessionIds.filter((sessionId) => sessionId !== closedSessionId),
   )
 }

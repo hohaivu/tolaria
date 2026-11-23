@@ -29,7 +29,7 @@ The AI chat image attachment domain lets a user send up to four images with a me
 ## Flows and states
 
 1. The user adds an image through paste, drop, or the paperclip.
-2. The frontend checks the MIME type and the size of pasted and dropped image data. A picked or dropped file path goes to a staging command without a frontend size check.
+2. The frontend checks the MIME type and the size of pasted and dropped image data. A picked or dropped file path goes to a staging command without a frontend size check. The Rust command checks the size (see "Limits and checks").
 3. The Rust side checks the file and writes the staged copy. It returns the absolute path. The composer shows a thumbnail.
 4. The user sends the message. The request carries the paths in `attachments`.
 5. The Rust side appends the paths to the prompt. The message keeps the paths.
@@ -82,10 +82,14 @@ A message with images has one of these outcomes:
 | Workspace window | Never clears the tmp folder. The window routes to its own app before the main window mounts. | `src/App.tsx` (`aiWorkspaceWindow` return, line 171) |
 | Draft image removed | Deletes that file | `useAiComposerImages.removeImage` |
 | New chat | Deletes the message images and the draft images | `useAiPanelController` (`handleNewChat`) |
-| Conversation closed | Deletes its message and draft images, except paths that other open sessions still use | `cleanupClosedConversationImages` in `src/lib/aiChatImages.ts` |
+| Conversation closed | Releases the ownership of the closed conversation. Deletes its message and draft images, except paths that an open session or an archived fork that you can restore still uses | `cleanupClosedConversationImages` in `src/lib/aiChatImages.ts` |
+| Conversation restored | The conversation owns its paths again | `reclaimSessionImages` in `src/lib/aiChatImages.ts` |
+| Message regenerated | Deletes the images of the discarded later turns, except images that the regenerated message reuses and paths that another session still uses | `releaseUnownedImages` in `src/lib/aiChatImages.ts`, called from `regenerateMessage` in `src/hooks/useCliAiAgent.ts` |
 
 - Reason for the startup clear: staged files do not outlive the app run.
-- Reason for keeping shared paths: a path can appear in more than one open session.
+- Reason for keeping shared paths: a fork copies the paths of its source, so one path can appear in more than one session. The file stays until no owner remains.
+- An archived fork stays an owner. Reason: you can restore it, and it must still show its images.
+- A closed conversation is not an owner. Its messages keep the paths and show placeholders after the file is deleted.
 - A missing file renders a placeholder in the bubble. Reason: a restart clears the files, but sessions keep the paths.
 
 ## Draft admission and discard

@@ -107,8 +107,9 @@ export function useAiComposerImages({
     [readImages, sessionId],
   )
 
-  const attachImages = useCallback(
-    async ({ files = [], paths = [] }: AttachImagesPayload) => {
+  // The draft lifetime is sampled once per gesture, so a close or reset anywhere in a batch retires all of it.
+  const attachWithinDraft = useCallback(
+    async ({ files = [], paths = [] }: AttachImagesPayload, gestureEpoch: number) => {
       const t = createTranslator(locale)
       if (!vaultPath.trim()) {
         if (files.length > 0 || paths.length > 0) onToast?.(t('ai.panel.images.stageFailed'))
@@ -119,6 +120,7 @@ export function useAiComposerImages({
         validationError: 'unsupported_type' | 'too_large' | null,
         stage: () => Promise<string>,
       ): Promise<'staged' | 'limit' | 'error' | 'discarded'> => {
+        if (draftEpoch() !== gestureEpoch) return 'discarded'
         if (validationError) {
           onToast?.(stageErrorToast(validationError, t))
           return 'error'
@@ -129,16 +131,16 @@ export function useAiComposerImages({
         }
 
         pendingCountRef.current += 1
-        const startEpoch = draftEpoch()
         try {
           const stagedPath = await stage()
-          if (draftEpoch() !== startEpoch) {
+          if (draftEpoch() !== gestureEpoch) {
             void deleteAiChatImages(vaultPath, [stagedPath])
             return 'discarded'
           }
           updateImages((current) => (current.includes(stagedPath) ? current : [...current, stagedPath]))
           return 'staged'
         } catch (error) {
+          if (draftEpoch() !== gestureEpoch) return 'discarded'
           onToast?.(stageErrorToast(classifyAiChatImageStageError(error), t))
           return 'error'
         } finally {
@@ -165,6 +167,11 @@ export function useAiComposerImages({
     [draftEpoch, locale, onToast, readImages, updateImages, vaultPath],
   )
 
+  const attachImages = useCallback(
+    (payload: AttachImagesPayload) => attachWithinDraft(payload, draftEpoch()),
+    [attachWithinDraft, draftEpoch],
+  )
+
   const pickImages = useCallback(async () => {
     if (pickerInFlightRef.current) return
 
@@ -175,6 +182,7 @@ export function useAiComposerImages({
     }
 
     pickerInFlightRef.current = true
+    const gestureEpoch = draftEpoch()
     try {
       const { open } = await import('@tauri-apps/plugin-dialog')
       const selected = await open({
@@ -186,14 +194,14 @@ export function useAiComposerImages({
       })
       const paths = normalizeDialogPaths(selected)
       if (paths.length > 0) {
-        await attachImages({ paths })
+        await attachWithinDraft({ paths }, gestureEpoch)
       }
     } catch {
       onToast?.(t('ai.panel.images.stageFailed'))
     } finally {
       pickerInFlightRef.current = false
     }
-  }, [attachImages, locale, onToast, readImages])
+  }, [attachWithinDraft, draftEpoch, locale, onToast, readImages])
 
   const removeImage = useCallback(
     (path: string) => {

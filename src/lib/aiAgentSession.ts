@@ -19,6 +19,7 @@ import { streamAiModel } from '../utils/streamAiModel'
 import { hydrateNoteReferences } from '../utils/ai-reference-content'
 import { createTranslator } from './i18n'
 import { getAiAgentDefinition } from './aiAgents'
+import { collectMessageImages } from './aiChatImages'
 
 export interface AiAgentAbortState {
   aborted: boolean
@@ -48,6 +49,8 @@ interface RegenerateAgentMessageOptions {
   runtime: AiAgentSessionRuntime
   context: AgentExecutionContext
   messageId: string
+  /** Receives image paths that only the discarded later turns referenced. */
+  onImagesDiscarded?: (paths: string[]) => void
 }
 
 interface SelectedTargetStreamRequest {
@@ -238,6 +241,7 @@ export async function regenerateAgentMessage({
   runtime,
   context,
   messageId,
+  onImagesDiscarded,
 }: RegenerateAgentMessageOptions): Promise<void> {
   const currentMessages = runtime.messagesRef.current
   const messageIndex = currentMessages.findIndex((message) => message.id === messageId)
@@ -246,6 +250,8 @@ export async function regenerateAgentMessage({
   if (blockIfUnsupportedImages(context, message.images)) return
 
   const preservedMessages = currentMessages.slice(0, messageIndex)
+  const reused = new Set(message.images)
+  const discardedImages = collectMessageImages(currentMessages.slice(messageIndex + 1)).filter((path) => !reused.has(path))
   runtime.abortRef.current = { aborted: false }
   runtime.responseAccRef.current = ''
   runtime.toolInputMapRef.current = new Map()
@@ -253,6 +259,8 @@ export async function regenerateAgentMessage({
   runtime.statusRef.current = 'idle'
   runtime.setMessages(preservedMessages)
   runtime.setStatus('idle')
+  // After truncation, so the session itself no longer counts as an owner of the discarded turns.
+  onImagesDiscarded?.(discardedImages)
 
   await sendAgentMessage({
     runtime,

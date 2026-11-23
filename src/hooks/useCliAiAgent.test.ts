@@ -7,6 +7,7 @@ import { getAgentDocsPath } from '../lib/agentDocsPath'
 import {
   cloneAiWorkspaceSessionUntilMessage,
   resetAiWorkspaceSessionStoreForTests,
+  setAiWorkspaceSessionMessages,
 } from '../lib/aiWorkspaceSessionStore'
 
 vi.mock('../utils/streamAiAgent', () => ({
@@ -247,5 +248,31 @@ describe('useCliAiAgent', () => {
     expect(mockStreamAiAgent).toHaveBeenLastCalledWith(expect.objectContaining({
       attachments: [stagedPath],
     }))
+  })
+
+  it('deletes images of turns discarded by regenerating an earlier message, unless another session owns them', async () => {
+    const earlier = '/Users/luca/Laputa/.tolaria/tmp/1-earlier.png'
+    const orphan = '/Users/luca/Laputa/.tolaria/tmp/2-orphan.png'
+    const shared = '/Users/luca/Laputa/.tolaria/tmp/3-shared.png'
+    const deleteSpy = vi.fn(() => null)
+    const originalHandlers = window.__mockHandlers
+    window.__mockHandlers = { ...originalHandlers, delete_ai_chat_images: deleteSpy }
+    try {
+      setAiWorkspaceSessionMessages('s1', [
+        { id: 'm1', userMessage: 'one', images: [earlier], actions: [], response: 'A' },
+        { id: 'm2', userMessage: 'two', images: [orphan, shared], actions: [], response: 'B' },
+      ])
+      setAiWorkspaceSessionMessages('s2', [{ id: 'm1', userMessage: 'two', images: [shared], actions: [] }])
+      const { result } = renderAgent(undefined, 'safe', 's1')
+
+      await act(async () => { await result.current.regenerateMessage('m1') })
+
+      await vi.waitFor(() => {
+        expect(deleteSpy).toHaveBeenCalledWith({ vaultPath: VAULT, paths: [orphan] })
+      })
+      expect(deleteSpy).toHaveBeenCalledTimes(1)
+    } finally {
+      window.__mockHandlers = originalHandlers
+    }
   })
 })

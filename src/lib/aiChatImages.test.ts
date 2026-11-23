@@ -22,7 +22,10 @@ import {
   clearAiChatImagesOnceForVault,
   deleteAiChatImages,
   getSessionDraftImages,
+  isImageAttachmentCandidateFile,
+  isImageAttachmentCandidatePath,
   normalizeStagingFilename,
+  reclaimSessionImages,
   setSessionDraftImages,
   stageAiChatImageFile,
   stageAiChatImageFromPath,
@@ -146,5 +149,46 @@ describe('aiChatImages', () => {
     })
     expect(getSessionDraftImages('chat-a')).toEqual([])
     expect(getSessionDraftImages('chat-b')).toEqual(['/vault/.tolaria/tmp/5-other-draft.png'])
+  })
+
+  it('releases a shared file when the last of two closed owners closes, not before', async () => {
+    const shared = '/vault/.tolaria/tmp/1-shared.png'
+    // Released ids are module state that outlives the store reset.
+    reclaimSessionImages('chat-src')
+    reclaimSessionImages('chat-fork')
+    setAiWorkspaceSessionMessages('chat-src', [{ id: 'm1', userMessage: 'a', images: [shared], actions: [] }])
+    setAiWorkspaceSessionMessages('chat-fork', [{ id: 'm1', userMessage: 'a', images: [shared], actions: [] }])
+    invokeMock.mockResolvedValue(null)
+
+    cleanupClosedConversationImages('chat-src', '/vault', ['chat-fork'])
+    expect(invokeMock).not.toHaveBeenCalled()
+
+    cleanupClosedConversationImages('chat-fork', '/vault', ['chat-src'])
+    await vi.waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith('delete_ai_chat_images', { vaultPath: '/vault', paths: [shared] })
+    })
+    expect(invokeMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('counts a restored conversation as an owner again', () => {
+    const shared = '/vault/.tolaria/tmp/1-shared.png'
+    // Released ids are module state that outlives the store reset.
+    reclaimSessionImages('chat-src')
+    reclaimSessionImages('chat-fork')
+    setAiWorkspaceSessionMessages('chat-src', [{ id: 'm1', userMessage: 'a', images: [shared], actions: [] }])
+    setAiWorkspaceSessionMessages('chat-fork', [{ id: 'm1', userMessage: 'a', images: [shared], actions: [] }])
+
+    cleanupClosedConversationImages('chat-src', '/vault', ['chat-fork'])
+    reclaimSessionImages('chat-src')
+    cleanupClosedConversationImages('chat-fork', '/vault', ['chat-src'])
+
+    expect(invokeMock).not.toHaveBeenCalled()
+  })
+
+  it('routes HEIC and HEIF to the chat rejection path as image candidates', () => {
+    expect(isImageAttachmentCandidatePath('/tmp/IMG_1.HEIC')).toBe(true)
+    expect(isImageAttachmentCandidatePath('/tmp/IMG_2.heif')).toBe(true)
+    expect(isImageAttachmentCandidateFile(new File(['x'], 'IMG_3.heic'))).toBe(true)
+    expect(isImageAttachmentCandidatePath('/tmp/notes.txt')).toBe(false)
   })
 })
