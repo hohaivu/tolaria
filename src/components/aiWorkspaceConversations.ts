@@ -409,8 +409,9 @@ export function useConversations({
     setConversations(next.conversations)
     setActiveId(next.activeId)
     if (closing && vaultPath) {
+      // Archived chats stay restorable, so they keep owning their images.
       const remainingIds = next.conversations
-        .filter((conversation) => conversation.id !== id && !conversation.archived)
+        .filter((conversation) => conversation.id !== id)
         .map((conversation) => conversation.id)
       cleanupClosedConversationImages(id, vaultPath, remainingIds)
     }

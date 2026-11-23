@@ -1025,4 +1025,43 @@ describe('AiWorkspace', () => {
       window.__mockHandlers = originalMockHandlers
     }
   })
+  it('keeps staged images shared with an archived fork when the source chat closes', async () => {
+    const originalMockHandlers = window.__mockHandlers
+    const deleteSpy = vi.fn(() => null)
+    window.__mockHandlers = { ...originalMockHandlers, delete_ai_chat_images: deleteSpy }
+    try {
+      const shared = '/tmp/vault/.tolaria/tmp/1-shared.png'
+      const sourceOnly = '/tmp/vault/.tolaria/tmp/2-source.png'
+      setAiWorkspaceSessionMessages('chat-a', [
+        { id: 'm1', userMessage: 'img', images: [shared, sourceOnly], actions: [] },
+      ])
+      setAiWorkspaceSessionMessages('chat-fork', [
+        { id: 'm1', userMessage: 'img', images: [shared], actions: [] },
+      ])
+
+      render(
+        <AiWorkspace
+          open
+          mode="side"
+          aiAgentsStatus={installedStatuses()}
+          aiModelProviders={providers}
+          conversationSettings={[
+            { id: 'chat-a', title: 'Alpha Thread', target_id: null, archived: false },
+            { id: 'chat-fork', title: 'Archived Fork', target_id: null, archived: true },
+          ]}
+          initialActiveConversationId="chat-a"
+          vaultPath="/tmp/vault"
+          onClose={vi.fn()}
+        />,
+      )
+
+      fireEvent.click(screen.getByRole('button', { name: 'Close Alpha Thread' }))
+
+      await waitFor(() => {
+        expect(deleteSpy).toHaveBeenCalledWith({ vaultPath: '/tmp/vault', paths: [sourceOnly] })
+      })
+    } finally {
+      window.__mockHandlers = originalMockHandlers
+    }
+  })
 })

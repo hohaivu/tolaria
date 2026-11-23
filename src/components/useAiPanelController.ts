@@ -184,7 +184,7 @@ function useAiPanelActions({
   const handleNewChat = useCallback(() => {
     void deleteAiChatImages(vaultPath, [
       ...collectMessageImages(agent.messages),
-      ...composerImages.consumeImages(),
+      ...composerImages.discardImages(),
     ])
     agent.clearConversation()
     setInput('')

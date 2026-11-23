@@ -22,7 +22,12 @@ vi.mock('../lib/aiChatImages', async (importOriginal) => {
   }
 })
 
-import { MAX_AI_CHAT_IMAGE_BYTES, setSessionDraftImages } from '../lib/aiChatImages'
+import {
+  MAX_AI_CHAT_IMAGE_BYTES,
+  cleanupClosedConversationImages,
+  getSessionDraftImages,
+  setSessionDraftImages,
+} from '../lib/aiChatImages'
 import { useAiComposerImages } from './useAiComposerImages'
 
 describe('useAiComposerImages', () => {
@@ -136,5 +141,62 @@ describe('useAiComposerImages', () => {
     expect(consumed).toEqual(['/vault/.tolaria/tmp/2-b.png'])
     expect(result.current.images).toEqual([])
     expect(deleteImagesMock).not.toHaveBeenCalled()
+  })
+  describe('staging that resolves after the draft was retired', () => {
+    function deferStaging() {
+      let resolveStage!: (path: string) => void
+      stagePathMock.mockReturnValueOnce(new Promise<string>((resolve) => { resolveStage = resolve }))
+      return (path: string) => resolveStage(path)
+    }
+
+    it('deletes the late file and leaves the draft empty after the conversation closes', async () => {
+      const resolveStage = deferStaging()
+      const { result } = renderHook(() => useAiComposerImages({ vaultPath: '/vault', sessionId: 'session-1' }))
+
+      let pending!: Promise<void>
+      act(() => { pending = result.current.attachImages({ paths: ['/tmp/late.png'] }) })
+      cleanupClosedConversationImages('session-1', '/vault', [])
+      await act(async () => {
+        resolveStage('/vault/.tolaria/tmp/late.png')
+        await pending
+      })
+
+      expect(getSessionDraftImages('session-1')).toEqual([])
+      expect(deleteImagesMock).toHaveBeenCalledWith('/vault', ['/vault/.tolaria/tmp/late.png'])
+    })
+
+    it('deletes the late file after a chat reset and still accepts the next paste', async () => {
+      const resolveStage = deferStaging()
+      const { result } = renderHook(() => useAiComposerImages({ vaultPath: '/vault', sessionId: 'session-1' }))
+
+      let pending!: Promise<void>
+      act(() => { pending = result.current.attachImages({ paths: ['/tmp/late.png'] }) })
+      act(() => { result.current.discardImages() })
+      await act(async () => {
+        resolveStage('/vault/.tolaria/tmp/late.png')
+        await pending
+      })
+      expect(result.current.images).toEqual([])
+      expect(deleteImagesMock).toHaveBeenCalledWith('/vault', ['/vault/.tolaria/tmp/late.png'])
+
+      stagePathMock.mockResolvedValueOnce('/vault/.tolaria/tmp/next.png')
+      await act(async () => { await result.current.attachImages({ paths: ['/tmp/next.png'] }) })
+      expect(result.current.images).toEqual(['/vault/.tolaria/tmp/next.png'])
+    })
+
+    it('deletes the late file when a session-less composer unmounts first', async () => {
+      const resolveStage = deferStaging()
+      const { result, unmount } = renderHook(() => useAiComposerImages({ vaultPath: '/vault' }))
+
+      let pending!: Promise<void>
+      act(() => { pending = result.current.attachImages({ paths: ['/tmp/late.png'] }) })
+      unmount()
+      await act(async () => {
+        resolveStage('/vault/.tolaria/tmp/late.png')
+        await pending
+      })
+
+      expect(deleteImagesMock).toHaveBeenCalledWith('/vault', ['/vault/.tolaria/tmp/late.png'])
+    })
   })
 })

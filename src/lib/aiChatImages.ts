@@ -24,6 +24,7 @@ const EMPTY_DRAFT_IMAGES: string[] = []
 const clearedVaultPaths = new Set<string>()
 const sessionDraftImages = new Map<string, string[]>()
 const sessionDraftListeners = new Map<string, Set<() => void>>()
+const sessionDraftEpochs = new Map<string, number>()
 
 export interface AttachImagesPayload {
   files?: File[]
@@ -196,6 +197,15 @@ export function subscribeSessionDraftImages(sessionId: string, listener: () => v
   }
 }
 
+export function sessionDraftEpoch(sessionId: string): number {
+  return sessionDraftEpochs.get(sessionId) ?? 0
+}
+
+/** Retires the session draft: staging that started before this call must discard its result. */
+export function retireSessionDraft(sessionId: string): void {
+  sessionDraftEpochs.set(sessionId, sessionDraftEpoch(sessionId) + 1)
+}
+
 function takeSessionDraftImages(sessionId: string): string[] {
   const current = getSessionDraftImages(sessionId)
   if (current.length === 0) return EMPTY_DRAFT_IMAGES
@@ -217,6 +227,7 @@ export function cleanupClosedConversationImages(
   remainingSessionIds: readonly string[],
 ): void {
   const closedMessageImages = collectMessageImages(aiWorkspaceSessionSnapshot(closedSessionId).messages)
+  retireSessionDraft(closedSessionId)
   const closedDraftImages = takeSessionDraftImages(closedSessionId)
   const candidates = [...closedMessageImages, ...closedDraftImages]
   if (candidates.length === 0) return

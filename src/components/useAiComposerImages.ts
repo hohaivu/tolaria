@@ -7,6 +7,8 @@ import {
   classifyAiChatImageStageError,
   deleteAiChatImages,
   getSessionDraftImages,
+  retireSessionDraft,
+  sessionDraftEpoch,
   setSessionDraftImages,
   stageAiChatImageFile,
   stageAiChatImageFromPath,
@@ -25,6 +27,8 @@ export interface AiPanelComposerImagesController {
   pickImages: () => Promise<void>
   removeImage: (path: string) => void
   consumeImages: () => string[]
+  /** Like consumeImages, and also discards staging still in flight (chat reset). */
+  discardImages: () => string[]
 }
 
 interface UseAiComposerImagesOptions {
@@ -69,10 +73,21 @@ export function useAiComposerImages({
   const imagesRef = useRef<string[]>(images)
   const pendingCountRef = useRef(0)
   const pickerInFlightRef = useRef(false)
+  const localEpochRef = useRef(0)
 
   useEffect(() => {
     imagesRef.current = images
   }, [images])
+
+  // A local (session-less) draft dies with the component; session drafts outlive it.
+  useEffect(() => () => {
+    localEpochRef.current += 1
+  }, [])
+
+  const draftEpoch = useCallback(
+    () => (sessionId ? sessionDraftEpoch(sessionId) : localEpochRef.current),
+    [sessionId],
+  )
 
   const readImages = useCallback(
     () => (sessionId ? getSessionDraftImages(sessionId) : imagesRef.current),
@@ -103,7 +118,7 @@ export function useAiComposerImages({
       const stageEntry = async (
         validationError: 'unsupported_type' | 'too_large' | null,
         stage: () => Promise<string>,
-      ): Promise<'staged' | 'limit' | 'error'> => {
+      ): Promise<'staged' | 'limit' | 'error' | 'discarded'> => {
         if (validationError) {
           onToast?.(stageErrorToast(validationError, t))
           return 'error'
@@ -114,8 +129,13 @@ export function useAiComposerImages({
         }
 
         pendingCountRef.current += 1
+        const startEpoch = draftEpoch()
         try {
           const stagedPath = await stage()
+          if (draftEpoch() !== startEpoch) {
+            void deleteAiChatImages(vaultPath, [stagedPath])
+            return 'discarded'
+          }
           updateImages((current) => (current.includes(stagedPath) ? current : [...current, stagedPath]))
           return 'staged'
         } catch (error) {
@@ -131,7 +151,7 @@ export function useAiComposerImages({
           validateAiChatImageFile(file),
           () => stageAiChatImageFile(vaultPath, file),
         )
-        if (outcome === 'limit') return
+        if (outcome === 'limit' || outcome === 'discarded') return
       }
 
       for (const sourcePath of paths) {
@@ -139,10 +159,10 @@ export function useAiComposerImages({
           validateAiChatImagePath(sourcePath),
           () => stageAiChatImageFromPath(vaultPath, sourcePath),
         )
-        if (outcome === 'limit') return
+        if (outcome === 'limit' || outcome === 'discarded') return
       }
     },
-    [locale, onToast, readImages, updateImages, vaultPath],
+    [draftEpoch, locale, onToast, readImages, updateImages, vaultPath],
   )
 
   const pickImages = useCallback(async () => {
@@ -190,11 +210,18 @@ export function useAiComposerImages({
     return current
   }, [readImages, updateImages])
 
+  const discardImages = useCallback(() => {
+    if (sessionId) retireSessionDraft(sessionId)
+    else localEpochRef.current += 1
+    return consumeImages()
+  }, [consumeImages, sessionId])
+
   return {
     images,
     attachImages,
     pickImages,
     removeImage,
     consumeImages,
+    discardImages,
   }
 }
