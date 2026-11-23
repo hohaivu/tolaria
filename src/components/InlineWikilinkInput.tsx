@@ -44,10 +44,8 @@ import {
 import { restorePendingRemountState } from './inlineWikilinkRemountState'
 import { useNativePathDrop } from './useNativePathDrop'
 import { translate, type AppLocale } from '../lib/i18n'
-import {
-  filenameFromPath,
-  type AttachImagesPayload,
-} from '../lib/aiChatImages'
+import type { AttachImagesPayload } from '../lib/aiChatImages'
+import { filenameFromPath } from '../utils/imageFilenames'
 import { createImageDropClaim } from '../utils/imageDropClaim'
 
 interface InlineWikilinkInputProps {

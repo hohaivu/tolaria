@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { ImageBroken } from '@phosphor-icons/react'
 import { ImageLightbox } from './ImageLightbox'
-import { filenameFromPath } from '../lib/aiChatImages'
+import { filenameFromPath } from '../utils/imageFilenames'
 import { createTranslator, type AppLocale } from '../lib/i18n'
 import { safeAttachmentAssetUrlFromPath } from '../utils/vaultAttachments'
 

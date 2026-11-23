@@ -7,10 +7,10 @@ import { hasRemoteVault } from '../lib/vaultBackend'
 import { cleanupTauriEventListeners } from '../utils/tauriEventCleanup'
 import { attachmentAssetUrlFromPath } from '../utils/vaultAttachments'
 import { createImageDropClaim } from '../utils/imageDropClaim'
+import { extensionFromFilename, filenameFromPath, isHeicFilename } from '../utils/imageFilenames'
 
 const IMAGE_MIME_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/heic', 'image/heif']
 const IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'tiff']
-const UNSUPPORTED_HEIC_EXTENSIONS = ['heic', 'heif']
 const UNSUPPORTED_HEIC_MIME_TYPES = ['image/heic', 'image/heif', 'image/heic-sequence', 'image/heif-sequence']
 
 type ImageUrlHandler = (url: string) => void
@@ -72,18 +72,6 @@ function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === 'string')
 }
 
-function filenameFromPath(path: string): string {
-  return path.split(/[\\/]/u).pop() || path
-}
-
-function extensionFromFilename(filename: string): string {
-  return filename.split('.').pop()?.toLowerCase() ?? ''
-}
-
-function isUnsupportedHeicFilename(filename: string): boolean {
-  return UNSUPPORTED_HEIC_EXTENSIONS.includes(extensionFromFilename(filename))
-}
-
 function unsupportedHeicImportError(fileName: string): ImageImportError {
   return {
     kind: 'unsupported-heic',
@@ -93,7 +81,7 @@ function unsupportedHeicImportError(fileName: string): ImageImportError {
 }
 
 function isUnsupportedHeicFile(file: File): boolean {
-  return isUnsupportedHeicFilename(file.name) || UNSUPPORTED_HEIC_MIME_TYPES.includes(file.type.toLowerCase())
+  return isHeicFilename(file.name) || UNSUPPORTED_HEIC_MIME_TYPES.includes(file.type.toLowerCase())
 }
 
 export function isUnsupportedImageFormatError(error: unknown): error is UnsupportedImageFormatError {
@@ -134,7 +122,7 @@ function isDroppedImageFile(file: File): boolean {
 }
 
 function isUnsupportedHeicPath(path: string): boolean {
-  return isUnsupportedHeicFilename(filenameFromPath(path))
+  return isHeicFilename(path)
 }
 
 export function emptyImageUploadResult(file: File): UploadImageFileResult {

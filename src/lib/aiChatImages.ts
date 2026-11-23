@@ -3,6 +3,7 @@ import { isTauri, mockInvoke } from '../mock-tauri'
 import type { AiAgentMessage } from './aiAgentConversation'
 import { aiWorkspaceSessionSnapshot } from './aiWorkspaceSessionStore'
 import { bytesToBase64 } from './vaultBackend/commandVaultBackend'
+import { extensionFromFilename } from '../utils/imageFilenames'
 
 export const MAX_AI_CHAT_IMAGES = 4
 export const MAX_AI_CHAT_IMAGE_BYTES = 15 * 1024 * 1024
@@ -36,17 +37,6 @@ export type AiChatImageStageError = AiChatImageValidationError | 'failed'
 
 function callCommand<T>(command: string, args: Record<string, unknown>): Promise<T> {
   return isTauri() ? invoke<T>(command, args) : mockInvoke<T>(command, args)
-}
-
-export function filenameFromPath(path: string): string {
-  return path.split(/[\\/]/u).pop() || path
-}
-
-function extensionFromFilename(filename: string): string {
-  const base = filenameFromPath(filename)
-  const dotIndex = base.lastIndexOf('.')
-  if (dotIndex <= 0 || dotIndex === base.length - 1) return ''
-  return base.slice(dotIndex + 1).toLowerCase()
 }
 
 function isAllowedAiChatImageExtension(filenameOrPath: string): boolean {
