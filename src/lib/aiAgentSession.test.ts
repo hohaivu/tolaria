@@ -480,6 +480,7 @@ describe('aiAgentSession', () => {
     nextMessageIdMock.mockReturnValue('msg-img-only')
     const session = createRuntime()
     const stagedPath = '/vault/.tolaria/tmp/1700000000001-shot.png'
+    const onAdmitted = vi.fn()
 
     await sendAgentMessage({
       runtime: session.runtime,
@@ -489,6 +490,7 @@ describe('aiAgentSession', () => {
         vaultPath: '/vault',
         permissionMode: 'safe',
       },
+      onAdmitted,
       prompt: {
         text: '   ',
         images: [stagedPath],
@@ -503,6 +505,7 @@ describe('aiAgentSession', () => {
       isStreaming: true,
       id: 'msg-img-only',
     }])
+    expect(onAdmitted).toHaveBeenCalledOnce()
     expect(streamAiAgentMock).toHaveBeenCalledWith(expect.objectContaining({
       attachments: [stagedPath],
     }))
@@ -514,6 +517,7 @@ describe('aiAgentSession', () => {
 
   it('blocks image sends on API-model targets with a localized toast and analytics', async () => {
     const onToast = vi.fn()
+    const onAdmitted = vi.fn()
     const session = createRuntime()
 
     await sendAgentMessage({
@@ -527,12 +531,14 @@ describe('aiAgentSession', () => {
         permissionMode: 'safe',
         onToast,
       },
+      onAdmitted,
       prompt: {
         text: 'Describe this',
         images: ['/vault/.tolaria/tmp/1700000000001-shot.png'],
       },
     })
 
+    expect(onAdmitted).not.toHaveBeenCalled()
     expect(streamAiModelMock).not.toHaveBeenCalled()
     expect(streamAiAgentMock).not.toHaveBeenCalled()
     expect(session.getMessages()).toEqual([])

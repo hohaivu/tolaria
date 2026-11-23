@@ -221,7 +221,7 @@ export function AiPanelView(options: AiPanelViewProps) {
         (text: string, references: Parameters<typeof handleSend>[1]) => {
           const hasImages = (controller.composerImages?.images.length ?? 0) > 0
           if ((!text.trim() && !hasImages) || isActive) return
-          if (handleSend(text, references) !== false) onSendPrompt?.(text)
+          handleSend(text, references, () => onSendPrompt?.(text))
         },
         [controller.composerImages?.images.length, handleSend, isActive, onSendPrompt],
       )

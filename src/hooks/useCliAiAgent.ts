@@ -148,11 +148,12 @@ export function useCliAiAgent(
     }
   }
 
-  async function sendMessage(text: string, references?: NoteReference[], images?: string[]): Promise<void> {
+  async function sendMessage(text: string, references?: NoteReference[], images?: string[], onAdmitted?: () => void): Promise<void> {
     await sendAgentMessage({
       runtime,
       context: await buildAgentContext(),
       prompt: { text, references, images },
+      onAdmitted,
     })
   }
 

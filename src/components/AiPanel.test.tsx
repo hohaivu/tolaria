@@ -3,7 +3,6 @@ import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest'
 import { render as rtlRender, screen, fireEvent, act, waitFor } from '@testing-library/react'
 import { AiPanel, AiPanelView } from './AiPanel'
 import { translate } from '../lib/i18n'
-import type { AiTarget } from '../lib/aiTargets'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import type { AiPanelController } from './useAiPanelController'
 import type { VaultEntry } from '../types'
@@ -23,6 +22,7 @@ vi.mock('../lib/telemetry', () => ({
 let mockMessages: ReturnType<typeof import('../hooks/useCliAiAgent').useCliAiAgent>['messages'] = []
 let mockStatus: ReturnType<typeof import('../hooks/useCliAiAgent').useCliAiAgent>['status'] = 'idle'
 const mockSendMessage = vi.fn()
+let mockAdmitSend = true
 const mockStopMessage = vi.fn()
 const mockClearConversation = vi.fn()
 const mockAddLocalMarker = vi.fn()
@@ -34,7 +34,11 @@ vi.mock('../hooks/useCliAiAgent', () => ({
     return {
       messages: mockMessages,
       status: mockStatus,
-      sendMessage: mockSendMessage,
+      sendMessage: (...args: unknown[]) => {
+        mockSendMessage(...args.slice(0, 3))
+        if (mockAdmitSend) (args[3] as (() => void) | undefined)?.()
+        return Promise.resolve()
+      },
       stopMessage: mockStopMessage,
       clearConversation: mockClearConversation,
       addLocalMarker: mockAddLocalMarker,
@@ -145,6 +149,7 @@ describe('AiPanel', () => {
     mockMessages = []
     mockStatus = 'idle'
     mockSendMessage.mockReset()
+    mockAdmitSend = true
     mockStopMessage.mockReset()
     mockClearConversation.mockReset()
     mockAddLocalMarker.mockReset()
@@ -648,31 +653,13 @@ describe('AiPanel', () => {
     expect(mockClearConversation).toHaveBeenCalledOnce()
   })
 
-  it('keeps composer images intact when sending to an API-model target', async () => {
+  it('keeps composer images and draft intact when the session rejects the image send', async () => {
+    mockAdmitSend = false
     window.__mockHandlers = {
       ...window.__mockHandlers,
       stage_ai_chat_image: () => '/tmp/vault/.tolaria/tmp/1-blocked.png',
     }
-    const apiTarget: AiTarget = {
-      kind: 'api_model',
-      provider: {
-        id: 'openai',
-        name: 'OpenAI',
-        kind: 'open_ai',
-        api_key_storage: 'env',
-        models: [],
-      },
-      model: {
-        id: 'gpt-4.1',
-        display_name: 'GPT-4.1',
-        capabilities: { streaming: true, tools: true, vision: true, json_mode: true, reasoning: true },
-      },
-      id: 'model:openai/gpt-4.1',
-      label: 'OpenAI · GPT-4.1',
-      shortLabel: 'GPT-4.1',
-    }
-
-    render(<AiPanel onClose={vi.fn()} vaultPath="/tmp/vault" defaultAiTarget={apiTarget} />)
+    render(<AiPanel onClose={vi.fn()} vaultPath="/tmp/vault" />)
 
     const png = new File(['png'], 'blocked.png', { type: 'image/png' })
     fireEvent.paste(screen.getByTestId('agent-input'), {

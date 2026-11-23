@@ -40,6 +40,8 @@ interface SendAgentMessageOptions {
   runtime: AiAgentSessionRuntime
   context: AgentExecutionContext
   prompt: PendingUserPrompt
+  /** Called once the send boundary accepts the prompt (not for ignored or image-rejected sends). */
+  onAdmitted?: () => void
 }
 
 interface RegenerateAgentMessageOptions {
@@ -159,11 +161,14 @@ export async function sendAgentMessage({
   runtime,
   context,
   prompt,
+  onAdmitted,
 }: SendAgentMessageOptions): Promise<void> {
   const currentStatus = runtime.statusRef.current
   const normalizedPrompt = normalizePrompt(prompt)
 
   if (shouldIgnorePrompt(currentStatus, normalizedPrompt)) return
+  if (blockIfUnsupportedImages(context, normalizedPrompt.images)) return
+  onAdmitted?.()
 
   if (!context.vaultPath) {
     blockMissingVault(runtime, context, normalizedPrompt)
@@ -174,8 +179,6 @@ export async function sendAgentMessage({
     blockUnavailableAgent(runtime, context, normalizedPrompt)
     return
   }
-
-  if (blockIfUnsupportedImages(context, normalizedPrompt.images)) return
 
   trackAiAgentMessageSent({
     agent: context.agent,

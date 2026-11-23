@@ -1,6 +1,5 @@
 import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
 import type { AiAgentId, AiAgentReadiness } from '../lib/aiAgents'
-import { canTargetReadImagePaths } from '../lib/aiAgentSession'
 import { collectMessageImages, deleteAiChatImages } from '../lib/aiChatImages'
 import type { AiTarget } from '../lib/aiTargets'
 import type { AppLocale } from '../lib/i18n'
@@ -49,7 +48,7 @@ export interface AiPanelController {
   hasContext: boolean
   isActive: boolean
   permissionMode: AiAgentPermissionMode
-  handleSend: (text: string, references: NoteReference[]) => boolean | void
+  handleSend: (text: string, references: NoteReference[], onSubmitted?: () => void) => void
   handleStop: () => void
   handleNavigateWikilink: (target: string) => void
   handlePermissionModeChange: (mode: AiAgentPermissionMode) => void
@@ -147,8 +146,6 @@ function usePanelAgent(
 function useAiPanelActions({
   agent,
   composerImages,
-  defaultAiAgent,
-  defaultAiTarget,
   isActive,
   onOpenNote,
   setInput,
@@ -156,26 +153,22 @@ function useAiPanelActions({
 }: {
   agent: ReturnType<typeof usePanelAgent>['agent']
   composerImages: AiPanelComposerImagesController
-  defaultAiAgent: AiAgentId
-  defaultAiTarget?: AiTarget
   isActive: boolean
   onOpenNote: UseAiPanelControllerArgs['onOpenNote']
   setInput: (value: string) => void
   vaultPath: string
 }) {
   const handleSend = useCallback(
-    (text: string, references: NoteReference[]): boolean => {
+    (text: string, references: NoteReference[], onSubmitted?: () => void): void => {
       const images = composerImages.images
-      if ((!text.trim() && images.length === 0) || isActive) return false
-      void agent.sendMessage(text, references, images)
-      if (images.length > 0 && !canTargetReadImagePaths({ agent: defaultAiAgent, target: defaultAiTarget })) {
-        return false
-      }
-      composerImages.consumeImages()
-      setInput('')
-      return true
+      if ((!text.trim() && images.length === 0) || isActive) return
+      void agent.sendMessage(text, references, images, () => {
+        composerImages.consumeImages()
+        setInput('')
+        onSubmitted?.()
+      })
     },
-    [agent, composerImages, defaultAiAgent, defaultAiTarget, isActive, setInput],
+    [agent, composerImages, isActive, setInput],
   )
   const handleStop = useCallback(() => {
     if (isActive) agent.stopMessage()
@@ -223,8 +216,6 @@ export function useAiPanelController(options: UseAiPanelControllerArgs): AiPanel
   const { handleSend, handleStop, handleNavigateWikilink, handleNewChat } = useAiPanelActions({
     agent,
     composerImages,
-    defaultAiAgent,
-    defaultAiTarget,
     isActive,
     onOpenNote,
     setInput,
