@@ -29,8 +29,8 @@ The AI chat image attachment domain lets a user send up to four images with a me
 ## Flows and states
 
 1. The user adds an image through paste, drop, or the paperclip.
-2. The frontend checks the MIME type and the size. Then it calls a staging command.
-3. The Rust side writes the file and returns its absolute path. The composer shows a thumbnail.
+2. The frontend checks the MIME type and the size of pasted and dropped image data. A picked or dropped file path goes to a staging command without a frontend size check.
+3. The Rust side checks the file and writes the staged copy. It returns the absolute path. The composer shows a thumbnail.
 4. The user sends the message. The request carries the paths in `attachments`.
 5. The Rust side appends the paths to the prompt. The message keeps the paths.
 6. The bubble shows the thumbnails. A click opens `ImageLightbox`.
@@ -47,28 +47,29 @@ A message with images has one of these outcomes:
 - Each image takes at most 15 MiB. Reason: the owner chose this limit.
 - Allowed types are PNG, JPEG, GIF, and WebP. Reason: the owner chose these types.
 - HEIC and HEIF are rejected on the client. Reason: the owner chose to reject them, as the note drop does.
-- The Rust side checks the extension and the size again. Reason: the command accepts data from the renderer.
+- The Rust side checks the extension and the size before it writes any staged file. Reason: the staging command accepts data and paths from the renderer.
 - Rejected files never reach staging. The app shows a toast and never drops a file silently. Reason: the owner chose visible rejection.
 
 ## Storage
 
 - `src-tauri/src/ai_chat_images.rs` writes staged images to `<vault>/.tolaria/tmp/`. Reason: the vault scan and search skip folders that start with `.`, so staged files do not appear as notes.
-- The module adds `.tolaria/` to `.git/info/exclude` once. It acts only when `.git` is a directory. Reason: the owner chose a local exclude, so the user `.gitignore` stays unchanged.
+- The module adds `.tolaria/` to `.git/info/exclude` once. It acts only when `.git` is a real directory. It skips the write when `.git/info` or `.git/info/exclude` is a link. Reason: the owner chose a local exclude, so the user `.gitignore` stays unchanged.
 - The module never writes `.gitignore`. Reason: the user owns that file.
-- The module deletes files only when they are direct children of the canonical tmp folder. Reason: not stated in the code.
+- The module deletes files only when they are direct children of the canonical tmp folder. The tmp folder must be a real directory, not a link, on both `.tolaria` and `tmp`. Reason: the code states that links must not let staging, prompt validation, cleanup, or asset scoping leave the vault.
 
 ## Prompt contract
 
 - `AiAgentStreamRequest` has an `attachments` field. Old callers that omit it get an empty list. Reason: the field uses `#[serde(default)]`.
-- `prepare_attachments()` in `src-tauri/src/ai_agents.rs` validates each path. It checks that each path is inside the tmp folder.
-- `append_attachments_to_message` adds an "Attached images" block to the message text. It runs before the agent adapter starts.
+- `prepare_attachments()` in `src-tauri/src/ai_agents.rs` runs before the agent adapter starts. It runs for all eight agents.
+- `prepare_attachments()` checks each path. Each path must be a regular file directly inside the canonical tmp folder.
+- `append_attachments_to_message` adds an "Attached images" block to the message text. The block lists the paths in request order.
 - The append step is idempotent. Reason: not stated in the code.
 - No CLI image flag changes. Reason: the design chose one path in the prompt for all eight agents.
 
 ## Vision gate
 
 - `canTargetReadImagePaths` in `src/lib/aiAgentSession.ts` returns false for API-model targets.
-- The same function returns the agent flag `readsImagePaths` for CLI agents. All eight CLI agents set the flag to true.
+- For CLI agents, the same function returns the agent flag `readsImagePaths`. All eight CLI agents set the flag to true.
 - A blocked send does not reach `streamAiAgent`. The toast `ai.panel.images.unsupported` names the target.
 - The analytics event `ai_agent_message_blocked` carries the reason `images_unsupported`.
 - Reason for the API-model rule: the only tool for API models is `create_note`, so the model cannot read a path.
@@ -78,7 +79,7 @@ A message with images has one of these outcomes:
 | Event | Action | Code |
 | --- | --- | --- |
 | App start (main window) | Clears the tmp folder once for each vault path in the run | `clearAiChatImagesOnceForVault` in `src/App.tsx` |
-| Workspace window | Never clears the tmp folder | `src/App.tsx` skips the call when `noteWindowParams` is set |
+| Workspace window | Never clears the tmp folder. The window routes to its own app before the main window mounts. | `src/App.tsx` (`aiWorkspaceWindow` return, line 171) |
 | Draft image removed | Deletes that file | `useAiComposerImages.removeImage` |
 | New chat | Deletes the message images and the draft images | `useAiPanelController` (`handleNewChat`) |
 | Conversation closed | Deletes its message and draft images, except paths that other open sessions still use | `cleanupClosedConversationImages` in `src/lib/aiChatImages.ts` |
@@ -86,6 +87,12 @@ A message with images has one of these outcomes:
 - Reason for the startup clear: staged files do not outlive the app run.
 - Reason for keeping shared paths: a path can appear in more than one open session.
 - A missing file renders a placeholder in the bubble. Reason: a restart clears the files, but sessions keep the paths.
+
+## Draft admission and discard
+
+- `sendMessage` in `src/hooks/useCliAiAgent.ts` takes an `onAdmitted` callback. The callback runs once when the send is admitted.
+- `discardImages` calls `retireSessionDraft`. That call raises the session draft epoch.
+- A staging result that finishes after the epoch changes is deleted and reports `discarded`. Reason: a late result must not add a draft to a session that the user already reset or closed.
 
 ## Sessions and persistence
 
@@ -111,6 +118,6 @@ A message with images has one of these outcomes:
 
 ## Open questions
 
-- Agent path reads are not confirmed by a real run. The manual smoke in `pnpm tauri dev` has not run for all eight agents. Each agent may treat `.tolaria/` as hidden when it searches. A direct path read should still work.
+- Agent path reads are confirmed by a real run for two agents only. The ignored tests `real_claude_reads_staged_image` and `real_pi_reads_staged_image` in `src-tauri/src/ai_chat_images_tests.rs` ask the agent to read a staged image and check that the answer contains "red". The other six agents are not confirmed. Each agent may treat `.tolaria/` as hidden when it searches. A direct path read should still work.
 - The thumbnail load from `.tolaria/tmp` through the asset protocol is not confirmed in `pnpm tauri dev`. The bubble and strip show a placeholder when a load fails.
 - API-model targets with vision cannot receive images. Base64 image content for API models is a follow-up.

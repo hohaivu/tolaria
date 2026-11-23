@@ -504,7 +504,7 @@ CLI-agent system prompts also include a local Tolaria docs orientation when the 
 
 Renderer-facing CLI setup errors can carry a `tolaria:i18n-error:` JSON marker with a translation key and primitive interpolation values. `localizedStreamError.ts` resolves that marker through the active app locale before the AI panel appends stream failure text, so native adapters such as Pi can keep CLI diagnostics in Rust while user-facing setup copy remains in the JSON catalogs.
 
-Image attachments (see `specs/ai-chat-images.md`) add an optional `attachments` list to the `stream_ai_agent` request. `ai_chat_images.rs` stages each image under `<vault>/.tolaria/tmp/` and adds `.tolaria/` to `.git/info/exclude`. `prepare_attachments()` appends an "Attached images" block with the paths to the message before any adapter starts, so all eight agents read the same prompt text. API-model targets and agents with `readsImagePaths: false` never receive attachments.
+Image attachments (see `specs/ai-chat-images.md`) add an optional `attachments` list to the `stream_ai_agent` request. `ai_chat_images.rs` stages each image under `<vault>/.tolaria/tmp/`. It adds `.tolaria/` to `.git/info/exclude` only when `.git` is a real directory and `.git/info` and `exclude` are not links. `prepare_attachments()` appends an "Attached images" block with the paths to the message before any adapter starts, so all eight agents read the same prompt text. The frontend vision gate blocks sends to API-model targets and agents with `readsImagePaths: false`, so those sends never carry attachments.
 
 #### Agent Event Flow
 
