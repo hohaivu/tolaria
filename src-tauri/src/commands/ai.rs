@@ -189,6 +189,11 @@ fn normalize_agent_request(mut request: AiAgentStreamRequest) -> AiAgentStreamRe
         .into_iter()
         .map(|path| expand_tilde(&path).into_owned())
         .collect();
+    request.attachments = request
+        .attachments
+        .into_iter()
+        .map(|path| expand_tilde(&path).into_owned())
+        .collect();
     request
 }
 
@@ -398,6 +403,7 @@ mod tests {
             vault_paths: vec!["~/Vaults/secondary".into()],
             permission_mode: None,
             event_name: None,
+            attachments: Vec::new(),
         };
 
         let normalized = normalize_agent_request(request);
@@ -428,6 +434,7 @@ mod tests {
             vault_paths: Vec::new(),
             permission_mode: None,
             event_name: None,
+            attachments: Vec::new(),
         };
 
         let normalized = normalize_agent_request(request);

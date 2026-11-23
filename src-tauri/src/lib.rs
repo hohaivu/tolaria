@@ -1,5 +1,6 @@
 mod ai_agent_processes;
 pub mod ai_agents;
+pub mod ai_chat_images;
 mod ai_model_tools;
 pub mod ai_models;
 pub mod antigravity_cli;

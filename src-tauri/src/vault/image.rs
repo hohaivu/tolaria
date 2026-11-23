@@ -8,7 +8,7 @@ fn is_safe_filename_char(c: char) -> bool {
 }
 
 /// Sanitize a filename by replacing unsafe characters with underscores.
-fn sanitize_filename(name: &str) -> String {
+pub(crate) fn sanitize_filename(name: &str) -> String {
     name.chars()
         .map(|c| if is_safe_filename_char(c) { c } else { '_' })
         .collect()
