@@ -29,13 +29,14 @@ pub(crate) fn missing_asset_scope_roots(
         .collect()
 }
 
-pub(crate) fn sync_vault_asset_scope(
+fn sync_directory_asset_scope(
     app_handle: &tauri::AppHandle,
-    vault_path: &Path,
+    dir_path: &Path,
+    recursive: bool,
 ) -> Result<(), String> {
     use tauri::Manager;
 
-    let requested_roots = vault_asset_scope_roots(vault_path)?;
+    let requested_roots = vault_asset_scope_roots(dir_path)?;
     let scope = app_handle.asset_protocol_scope();
     let state: tauri::State<'_, AllowedAssetScopeRoots> = app_handle.state();
     let mut allowed_roots = state
@@ -45,7 +46,7 @@ pub(crate) fn sync_vault_asset_scope(
     let roots_to_allow = missing_asset_scope_roots(&allowed_roots, &requested_roots);
 
     for root in &roots_to_allow {
-        scope.allow_directory(root, true).map_err(|error| {
+        scope.allow_directory(root, recursive).map_err(|error| {
             format!(
                 "Failed to allow asset access for {}: {error}",
                 root.display()
@@ -55,4 +56,18 @@ pub(crate) fn sync_vault_asset_scope(
 
     allowed_roots.extend(roots_to_allow);
     Ok(())
+}
+
+pub(crate) fn sync_vault_asset_scope(
+    app_handle: &tauri::AppHandle,
+    vault_path: &Path,
+) -> Result<(), String> {
+    sync_directory_asset_scope(app_handle, vault_path, true)
+}
+
+pub(crate) fn sync_ai_chat_tmp_asset_scope(
+    app_handle: &tauri::AppHandle,
+    tmp_dir: &Path,
+) -> Result<(), String> {
+    sync_directory_asset_scope(app_handle, tmp_dir, false)
 }
