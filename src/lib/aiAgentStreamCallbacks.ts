@@ -97,7 +97,42 @@ function finalResponseText(response: AssistantResponseText, agent: AiAgentId): A
   return `${getAiAgentDefinition(agent).label} finished without returning a reply.`
 }
 
-function retainedToolOutput({ output }: ToolOutputInspection): ToolOutputText | undefined {
+const IMAGE_BYTES_OMITTED = '[image data omitted]'
+const DATA_URL_IMAGE_PATTERN = /data:image\/[\w.+-]+;base64,[A-Za-z0-9+/=]+/gu
+
+function isImageBlock(value: Record<string, unknown>): boolean {
+  const { mimeType, mime_type: snakeMimeType, type } = value
+  return type === 'image'
+    || (typeof mimeType === 'string' && mimeType.startsWith('image/'))
+    || (typeof snakeMimeType === 'string' && snakeMimeType.startsWith('image/'))
+}
+
+function withoutImageBytes(value: unknown): unknown {
+  if (typeof value === 'string') return value.replace(DATA_URL_IMAGE_PATTERN, IMAGE_BYTES_OMITTED)
+  if (Array.isArray(value)) return value.map(withoutImageBytes)
+  if (!isRecord(value)) return value
+
+  const imageBlock = isImageBlock(value)
+  return Object.fromEntries(Object.entries(value).map(([key, entry]) => [
+    key,
+    imageBlock && typeof entry === 'string' && (key === 'data' || key === 'base64' || key === 'bytes')
+      ? IMAGE_BYTES_OMITTED
+      : withoutImageBytes(entry),
+  ]))
+}
+
+// Attachment reads must never put image bytes back into transcript state or storage.
+function outputWithoutImageBytes(output: ToolOutputText | undefined): ToolOutputText | undefined {
+  if (!output) return output
+  try {
+    return JSON.stringify(withoutImageBytes(JSON.parse(output)))
+  } catch {
+    return output.replace(DATA_URL_IMAGE_PATTERN, IMAGE_BYTES_OMITTED)
+  }
+}
+
+function retainedToolOutput(inspection: ToolOutputInspection): ToolOutputText | undefined {
+  const output = outputWithoutImageBytes(inspection.output)
   if (!output || output.length <= MAX_RETAINED_TOOL_OUTPUT_CHARS) return output
 
   const omitted = output.length - MAX_RETAINED_TOOL_OUTPUT_CHARS
