@@ -351,6 +351,90 @@ fn validate_staged_attachments_rejects_outside_traversal_missing_and_symlinks() 
     }
 }
 
+#[cfg(unix)]
+fn link_tolaria_tmp(vault: &Path, outside: &Path, link_tolaria: bool) {
+    if link_tolaria {
+        std::os::unix::fs::symlink(outside, vault.join(".tolaria")).unwrap();
+    } else {
+        fs::create_dir(vault.join(".tolaria")).unwrap();
+        std::os::unix::fs::symlink(outside, vault.join(".tolaria/tmp")).unwrap();
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn linked_tolaria_or_tmp_directory_is_refused_by_every_operation() {
+    for link_tolaria in [true, false] {
+        let vault = TempDir::new().unwrap();
+        let outside = TempDir::new().unwrap();
+        let vault_path = vault.path().to_string_lossy().into_owned();
+        let source = TempDir::new().unwrap();
+        let source_file = source.path().join("src.png");
+        fs::write(&source_file, b"src").unwrap();
+        // The outside directory plays `.tolaria` (holding a `tmp` dir) or `tmp` itself.
+        let outside_files_dir = if link_tolaria {
+            fs::create_dir(outside.path().join("tmp")).unwrap();
+            outside.path().join("tmp")
+        } else {
+            outside.path().to_path_buf()
+        };
+        let outside_file = outside_files_dir.join("keep.png");
+        fs::write(&outside_file, b"keep").unwrap();
+        link_tolaria_tmp(vault.path(), outside.path(), link_tolaria);
+        let outside_arg = outside_file.to_string_lossy().into_owned();
+
+        assert!(stage_ai_chat_image(&vault_path, "a.png", &encode_base64(b"a")).is_err());
+        assert!(stage_ai_chat_image_from_path(&vault_path, source_file.to_str().unwrap()).is_err());
+        assert!(validate_staged_attachments(&vault_path, &[outside_arg.clone()]).is_err());
+        assert!(delete_ai_chat_images(&vault_path, &[outside_arg]).is_err());
+        assert!(clear_ai_chat_images(&vault_path).is_err());
+
+        let names: Vec<_> = fs::read_dir(&outside_files_dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(names, vec![std::ffi::OsString::from("keep.png")]);
+        assert_eq!(fs::read(&outside_file).unwrap(), b"keep");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn linked_git_exclude_or_info_never_redirects_the_exclude_write() {
+    // `exclude` -> .gitignore
+    let vault = TempDir::new().unwrap();
+    fs::create_dir_all(vault.path().join(".git/info")).unwrap();
+    fs::write(vault.path().join(".gitignore"), "custom/\n").unwrap();
+    std::os::unix::fs::symlink(vault.path().join(".gitignore"), vault.path().join(".git/info/exclude")).unwrap();
+    let vault_path = vault.path().to_string_lossy().into_owned();
+    stage_ai_chat_image(&vault_path, "one.png", &encode_base64(b"img")).unwrap();
+    assert_eq!(fs::read_to_string(vault.path().join(".gitignore")).unwrap(), "custom/\n");
+
+    // `info` -> outside directory
+    let vault = TempDir::new().unwrap();
+    let outside = TempDir::new().unwrap();
+    fs::create_dir(vault.path().join(".git")).unwrap();
+    std::os::unix::fs::symlink(outside.path(), vault.path().join(".git/info")).unwrap();
+    let vault_path = vault.path().to_string_lossy().into_owned();
+    stage_ai_chat_image(&vault_path, "one.png", &encode_base64(b"img")).unwrap();
+    assert_eq!(fs::read_dir(outside.path()).unwrap().count(), 0);
+}
+
+#[cfg(unix)]
+#[test]
+fn staging_never_writes_through_a_planted_leaf_symlink() {
+    let vault = TempDir::new().unwrap();
+    let outside = TempDir::new().unwrap();
+    let vault_path = vault.path().to_string_lossy().into_owned();
+    let target = unique_image_path(&confined_tmp_dir(&vault_path, true).unwrap().unwrap(), "p.png");
+    let outside_file = outside.path().join("victim.png");
+    fs::write(&outside_file, b"victim").unwrap();
+    std::os::unix::fs::symlink(&outside_file, &target).unwrap();
+
+    assert!(create_staged_file(&target).is_err());
+    assert_eq!(fs::read(&outside_file).unwrap(), b"victim");
+}
+
 #[test]
 fn append_attachments_to_message_handles_empty_order_and_idempotency() {
     let paths = vec![

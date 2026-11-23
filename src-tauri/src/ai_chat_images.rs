@@ -2,7 +2,7 @@ use crate::vault::{
     decode_base64_image, has_allowed_image_extension, unique_image_path, MAX_IMAGE_BYTES,
 };
 use std::fs;
-use std::io::ErrorKind;
+use std::io::{self, ErrorKind, Write};
 use std::path::{Path, PathBuf};
 
 const ALLOWED_IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp"];
@@ -47,6 +47,40 @@ fn remove_file_if_present(path: &Path, err_context: &str) -> Result<(), String> 
     }
 }
 
+/// Returns the real `<vault>/.tolaria/tmp` directory, refusing links on either component so staging,
+/// prompt validation, cleanup and asset scoping can never leave the vault. `Ok(None)` means it is
+/// missing and `create` is false.
+fn confined_tmp_dir(vault_path: &str, create: bool) -> Result<Option<PathBuf>, String> {
+    let mut dir = PathBuf::from(vault_path);
+    for component in [TOLARIA_DIR, TMP_SUBDIR] {
+        dir.push(component);
+        match fs::symlink_metadata(&dir) {
+            Ok(metadata) if metadata.file_type().is_dir() => {}
+            Ok(_) => return Err(format!("{} must be a real directory, not a link", dir.display())),
+            Err(error) if error.kind() == ErrorKind::NotFound => {
+                if !create {
+                    return Ok(None);
+                }
+                fs::create_dir(&dir)
+                    .map_err(|error| format!("Failed to create AI chat temp directory: {error}"))?;
+            }
+            Err(error) => return Err(format!("Failed to inspect AI chat temp directory: {error}")),
+        }
+    }
+    Ok(Some(dir))
+}
+
+fn is_real_entry(path: &Path, want_dir: bool) -> Result<Option<bool>, String> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            let file_type = metadata.file_type();
+            Ok(Some(if want_dir { file_type.is_dir() } else { file_type.is_file() }))
+        }
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(format!("Failed to inspect {}: {error}", path.display())),
+    }
+}
+
 fn ensure_git_info_exclude(vault_dir: &Path) -> Result<(), String> {
     let git_dir = vault_dir.join(".git");
     let Ok(metadata) = fs::symlink_metadata(&git_dir) else {
@@ -56,15 +90,21 @@ fn ensure_git_info_exclude(vault_dir: &Path) -> Result<(), String> {
         return Ok(());
     }
 
+    // A linked `info` or `exclude` could redirect the write (e.g. onto `.gitignore`): skip, like a linked `.git`.
     let info_dir = git_dir.join("info");
-    fs::create_dir_all(&info_dir)
-        .map_err(|error| format!("Failed to create .git/info directory: {error}"))?;
+    match is_real_entry(&info_dir, true)? {
+        Some(true) => {}
+        Some(false) => return Ok(()),
+        None => fs::create_dir(&info_dir)
+            .map_err(|error| format!("Failed to create .git/info directory: {error}"))?,
+    }
 
     let exclude_path = info_dir.join("exclude");
-    let existing = match fs::read_to_string(&exclude_path) {
-        Ok(contents) => contents,
-        Err(error) if error.kind() == ErrorKind::NotFound => String::new(),
-        Err(error) => return Err(format!("Failed to read .git/info/exclude: {error}")),
+    let existing = match is_real_entry(&exclude_path, false)? {
+        Some(true) => fs::read_to_string(&exclude_path)
+            .map_err(|error| format!("Failed to read .git/info/exclude: {error}"))?,
+        Some(false) => return Ok(()),
+        None => String::new(),
     };
 
     if existing.lines().any(|line| line == GIT_EXCLUDE_ENTRY) {
@@ -82,10 +122,14 @@ fn ensure_git_info_exclude(vault_dir: &Path) -> Result<(), String> {
         .map_err(|error| format!("Failed to update .git/info/exclude: {error}"))
 }
 
+/// `create_new` refuses an existing destination, including a planted symlink.
+fn create_staged_file(path: &Path) -> io::Result<fs::File> {
+    fs::OpenOptions::new().write(true).create_new(true).open(path)
+}
+
 fn prepare_staging_target(vault_path: &str, filename: &str) -> Result<PathBuf, String> {
-    let tmp_dir = ai_chat_tmp_dir(vault_path);
-    fs::create_dir_all(&tmp_dir)
-        .map_err(|error| format!("Failed to create AI chat temp directory: {error}"))?;
+    let tmp_dir = confined_tmp_dir(vault_path, true)?
+        .ok_or_else(|| "Failed to create AI chat temp directory".to_string())?;
     ensure_git_info_exclude(Path::new(vault_path))?;
     Ok(unique_image_path(&tmp_dir, filename))
 }
@@ -101,7 +145,8 @@ pub fn stage_ai_chat_image(
     validate_image_size(bytes.len() as u64)?;
 
     let target_path = prepare_staging_target(vault_path, filename)?;
-    fs::write(&target_path, bytes)
+    create_staged_file(&target_path)
+        .and_then(|mut file| file.write_all(&bytes))
         .map_err(|error| format!("Failed to write staged image: {error}"))?;
     Ok(target_path.to_string_lossy().into_owned())
 }
@@ -123,7 +168,11 @@ pub fn stage_ai_chat_image_from_path(vault_path: &str, source_path: &str) -> Res
         .and_then(|name| name.to_str())
         .unwrap_or("image");
     let target_path = prepare_staging_target(vault_path, filename)?;
-    fs::copy(source, &target_path)
+    fs::File::open(source)
+        .and_then(|mut input| {
+            let mut output = create_staged_file(&target_path)?;
+            io::copy(&mut input, &mut output)
+        })
         .map_err(|error| format!("Failed to copy staged image: {error}"))?;
     Ok(target_path.to_string_lossy().into_owned())
 }
@@ -131,7 +180,10 @@ pub fn stage_ai_chat_image_from_path(vault_path: &str, source_path: &str) -> Res
 /// Deletes staged image files that reside directly inside canonical `<vault>/.tolaria/tmp`.
 /// Missing paths and paths outside that directory are silently skipped.
 pub fn delete_ai_chat_images(vault_path: &str, paths: &[String]) -> Result<(), String> {
-    let Ok(canonical_tmp_dir) = fs::canonicalize(ai_chat_tmp_dir(vault_path)) else {
+    let Some(tmp_dir) = confined_tmp_dir(vault_path, false)? else {
+        return Ok(());
+    };
+    let Ok(canonical_tmp_dir) = fs::canonicalize(tmp_dir) else {
         return Ok(());
     };
 
@@ -149,10 +201,9 @@ pub fn delete_ai_chat_images(vault_path: &str, paths: &[String]) -> Result<(), S
 
 /// Removes all files inside `<vault>/.tolaria/tmp`. No-op if the directory does not exist.
 pub fn clear_ai_chat_images(vault_path: &str) -> Result<(), String> {
-    let tmp_dir = ai_chat_tmp_dir(vault_path);
-    if !tmp_dir.exists() {
+    let Some(tmp_dir) = confined_tmp_dir(vault_path, false)? else {
         return Ok(());
-    }
+    };
 
     let canonical_tmp_dir = fs::canonicalize(&tmp_dir)
         .map_err(|error| format!("Failed to resolve AI chat temp directory: {error}"))?;
@@ -182,8 +233,9 @@ pub(crate) fn validate_staged_attachments(
         return Ok(Vec::new());
     }
 
-    let canonical_tmp_dir = fs::canonicalize(ai_chat_tmp_dir(vault_path))
-        .map_err(|_| "Staged image directory does not exist in vault".to_string())?;
+    let canonical_tmp_dir = confined_tmp_dir(vault_path, false)?
+        .and_then(|tmp_dir| fs::canonicalize(tmp_dir).ok())
+        .ok_or_else(|| "Staged image directory does not exist in vault".to_string())?;
 
     let mut validated = Vec::with_capacity(attachments.len());
     for raw_path in attachments {
