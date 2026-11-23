@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { createTranslator, type AppLocale } from '../lib/i18n'
+import { normalizeDialogPaths } from '../utils/vault-dialog'
 import {
   ALLOWED_AI_CHAT_IMAGE_EXTENSIONS,
   MAX_AI_CHAT_IMAGES,
   classifyAiChatImageStageError,
   deleteAiChatImages,
   getSessionDraftImages,
-  normalizePickedImagePaths,
   setSessionDraftImages,
   stageAiChatImageFile,
   stageAiChatImageFromPath,
@@ -25,7 +25,6 @@ export interface AiPanelComposerImagesController {
   pickImages: () => Promise<void>
   removeImage: (path: string) => void
   consumeImages: () => string[]
-  clearAndDeleteImages: () => void
 }
 
 interface UseAiComposerImagesOptions {
@@ -75,9 +74,14 @@ export function useAiComposerImages({
     imagesRef.current = images
   }, [images])
 
+  const readImages = useCallback(
+    () => (sessionId ? getSessionDraftImages(sessionId) : imagesRef.current),
+    [sessionId],
+  )
+
   const updateImages = useCallback(
     (updater: (current: string[]) => string[]) => {
-      const next = updater(imagesRef.current)
+      const next = updater(readImages())
       imagesRef.current = next
       if (sessionId) {
         setSessionDraftImages(sessionId, next)
@@ -85,7 +89,7 @@ export function useAiComposerImages({
         setLocalImages(next)
       }
     },
-    [sessionId],
+    [readImages, sessionId],
   )
 
   const attachImages = useCallback(
@@ -104,7 +108,7 @@ export function useAiComposerImages({
           onToast?.(stageErrorToast(validationError, t))
           return 'error'
         }
-        if (imagesRef.current.length + pendingCountRef.current >= MAX_AI_CHAT_IMAGES) {
+        if (readImages().length + pendingCountRef.current >= MAX_AI_CHAT_IMAGES) {
           onToast?.(t('ai.panel.images.tooMany', { count: MAX_AI_CHAT_IMAGES }))
           return 'limit'
         }
@@ -138,14 +142,14 @@ export function useAiComposerImages({
         if (outcome === 'limit') return
       }
     },
-    [locale, onToast, updateImages, vaultPath],
+    [locale, onToast, readImages, updateImages, vaultPath],
   )
 
   const pickImages = useCallback(async () => {
     if (pickerInFlightRef.current) return
 
     const t = createTranslator(locale)
-    if (imagesRef.current.length + pendingCountRef.current >= MAX_AI_CHAT_IMAGES) {
+    if (readImages().length + pendingCountRef.current >= MAX_AI_CHAT_IMAGES) {
       onToast?.(t('ai.panel.images.tooMany', { count: MAX_AI_CHAT_IMAGES }))
       return
     }
@@ -160,7 +164,7 @@ export function useAiComposerImages({
           extensions: [...ALLOWED_AI_CHAT_IMAGE_EXTENSIONS],
         }],
       })
-      const paths = normalizePickedImagePaths(selected)
+      const paths = normalizeDialogPaths(selected)
       if (paths.length > 0) {
         await attachImages({ paths })
       }
@@ -169,7 +173,7 @@ export function useAiComposerImages({
     } finally {
       pickerInFlightRef.current = false
     }
-  }, [attachImages, locale, onToast])
+  }, [attachImages, locale, onToast, readImages])
 
   const removeImage = useCallback(
     (path: string) => {
@@ -180,18 +184,11 @@ export function useAiComposerImages({
   )
 
   const consumeImages = useCallback(() => {
-    const current = imagesRef.current
+    const current = readImages()
     if (current.length === 0) return EMPTY_IMAGES
     updateImages(() => EMPTY_IMAGES)
     return current
-  }, [updateImages])
-
-  const clearAndDeleteImages = useCallback(() => {
-    const removed = consumeImages()
-    if (removed.length > 0) {
-      void deleteAiChatImages(vaultPath, removed)
-    }
-  }, [consumeImages, vaultPath])
+  }, [readImages, updateImages])
 
   return {
     images,
@@ -199,6 +196,5 @@ export function useAiComposerImages({
     pickImages,
     removeImage,
     consumeImages,
-    clearAndDeleteImages,
   }
 }

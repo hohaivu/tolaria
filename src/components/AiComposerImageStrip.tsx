@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import { ImageBroken, X } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
-import { aiChatImageSrc, filenameFromPath } from '../lib/aiChatImages'
+import { filenameFromPath } from '../lib/aiChatImages'
 import { createTranslator, type AppLocale } from '../lib/i18n'
+import { safeAttachmentAssetUrlFromPath } from '../utils/vaultAttachments'
 
 interface AiComposerImageStripProps {
   images: string[]
@@ -24,7 +25,7 @@ function ComposerImageThumbnail({ path }: { path: string }) {
 
   return (
     <img
-      src={aiChatImageSrc(path)}
+      src={safeAttachmentAssetUrlFromPath({ path })}
       alt={filenameFromPath(path)}
       className="h-full w-full object-cover"
       onError={() => setFailed(true)}

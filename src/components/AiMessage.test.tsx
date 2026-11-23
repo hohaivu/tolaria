@@ -260,8 +260,8 @@ describe('AiMessage', () => {
     expect(thumbImg).toHaveAttribute('alt', '1700000000001-diagram.png')
 
     fireEvent.click(thumbBtn)
-    expect(screen.getByTestId('ai-image-preview-dialog')).toBeTruthy()
-    expect(screen.getByTestId('ai-image-preview-image')).toHaveAttribute('alt', '1700000000001-diagram.png')
+    expect(screen.getByTestId('image-lightbox')).toBeTruthy()
+    expect(screen.getByTestId('image-lightbox-image')).toHaveAttribute('alt', '1700000000001-diagram.png')
   })
 
   it('shows a placeholder when a saved message image fails to load and omits empty text blocks', () => {

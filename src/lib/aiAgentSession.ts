@@ -61,10 +61,11 @@ export function canTargetReadImagePaths(
   context: Pick<AgentExecutionContext, 'agent' | 'target'>,
 ): boolean {
   if (context.target?.kind === 'api_model') return false
-  return getAiAgentDefinition(context.agent).readsImagePaths
+  const agent = context.target?.kind === 'agent' ? context.target.agent : context.agent
+  return getAiAgentDefinition(agent).readsImagePaths
 }
 
-export function resolveTargetLabel(
+function resolveTargetLabel(
   context: Pick<AgentExecutionContext, 'agent' | 'target'>,
 ): string {
   return context.target?.label ?? getAiAgentDefinition(context.agent).label
@@ -102,10 +103,15 @@ function blockUnavailableAgent(runtime: AiAgentSessionRuntime, context: AgentExe
   )
 }
 
-function blockUnsupportedImages(context: AgentExecutionContext): void {
+function blockIfUnsupportedImages(
+  context: AgentExecutionContext,
+  images?: readonly string[],
+): boolean {
+  if (!images || images.length === 0 || canTargetReadImagePaths(context)) return false
   trackAiAgentMessageBlocked(context.agent, 'images_unsupported')
   const t = createTranslator(context.locale ?? 'en')
   context.onToast?.(t('ai.panel.images.unsupported', { agent: resolveTargetLabel(context) }))
+  return true
 }
 
 async function streamWithSelectedTarget({
@@ -169,10 +175,7 @@ export async function sendAgentMessage({
     return
   }
 
-  if (normalizedPrompt.images && normalizedPrompt.images.length > 0 && !canTargetReadImagePaths(context)) {
-    blockUnsupportedImages(context)
-    return
-  }
+  if (blockIfUnsupportedImages(context, normalizedPrompt.images)) return
 
   trackAiAgentMessageSent({
     agent: context.agent,
@@ -237,10 +240,7 @@ export async function regenerateAgentMessage({
   const messageIndex = currentMessages.findIndex((message) => message.id === messageId)
   const message = currentMessages[messageIndex]
   if (!message || message.localMarker || runtime.statusRef.current === 'thinking' || runtime.statusRef.current === 'tool-executing') return
-  if (message.images && message.images.length > 0 && !canTargetReadImagePaths(context)) {
-    blockUnsupportedImages(context)
-    return
-  }
+  if (blockIfUnsupportedImages(context, message.images)) return
 
   const preservedMessages = currentMessages.slice(0, messageIndex)
   runtime.abortRef.current = { aborted: false }

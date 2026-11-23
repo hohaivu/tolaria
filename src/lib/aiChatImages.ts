@@ -1,4 +1,4 @@
-import { convertFileSrc, invoke } from '@tauri-apps/api/core'
+import { invoke } from '@tauri-apps/api/core'
 import { isTauri, mockInvoke } from '../mock-tauri'
 import type { AiAgentMessage } from './aiAgentConversation'
 import { aiWorkspaceSessionSnapshot } from './aiWorkspaceSessionStore'
@@ -10,8 +10,6 @@ export const ALLOWED_AI_CHAT_IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'w
 
 const ALLOWED_EXTENSION_SET = new Set<string>(ALLOWED_AI_CHAT_IMAGE_EXTENSIONS)
 const ALLOWED_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp'])
-const HEIC_EXTENSIONS = new Set(['heic', 'heif'])
-const HEIC_MIME_TYPES = new Set(['image/heic', 'image/heif', 'image/heic-sequence', 'image/heif-sequence'])
 const IMAGE_CANDIDATE_EXTENSIONS = new Set([
   'png', 'jpg', 'jpeg', 'gif', 'webp', 'heic', 'heif', 'bmp', 'svg', 'tif', 'tiff', 'avif', 'ico',
 ])
@@ -43,22 +41,14 @@ export function filenameFromPath(path: string): string {
   return path.split(/[\\/]/u).pop() || path
 }
 
-export function extensionFromFilename(filename: string): string {
+function extensionFromFilename(filename: string): string {
   const base = filenameFromPath(filename)
   const dotIndex = base.lastIndexOf('.')
   if (dotIndex <= 0 || dotIndex === base.length - 1) return ''
   return base.slice(dotIndex + 1).toLowerCase()
 }
 
-export function isHeicImagePath(path: string): boolean {
-  return HEIC_EXTENSIONS.has(extensionFromFilename(path))
-}
-
-export function isHeicImageFile(file: File): boolean {
-  return isHeicImagePath(file.name) || HEIC_MIME_TYPES.has(file.type.toLowerCase())
-}
-
-export function isAllowedAiChatImageExtension(filenameOrPath: string): boolean {
+function isAllowedAiChatImageExtension(filenameOrPath: string): boolean {
   return ALLOWED_EXTENSION_SET.has(extensionFromFilename(filenameOrPath))
 }
 
@@ -76,8 +66,6 @@ export function normalizeStagingFilename(file: File): string {
 }
 
 export function validateAiChatImageFile(file: File): AiChatImageValidationError | null {
-  if (isHeicImageFile(file)) return 'unsupported_type'
-
   const mime = file.type.toLowerCase()
   const ext = extensionFromFilename(file.name)
 
@@ -93,8 +81,7 @@ export function validateAiChatImageFile(file: File): AiChatImageValidationError 
 }
 
 export function validateAiChatImagePath(path: string): 'unsupported_type' | null {
-  if (isHeicImagePath(path) || !isAllowedAiChatImageExtension(path)) return 'unsupported_type'
-  return null
+  return isAllowedAiChatImageExtension(path) ? null : 'unsupported_type'
 }
 
 export function classifyAiChatImageStageError(error: unknown): AiChatImageStageError {
@@ -102,14 +89,6 @@ export function classifyAiChatImageStageError(error: unknown): AiChatImageStageE
   if (message.includes('too_large')) return 'too_large'
   if (message.includes('unsupported_type')) return 'unsupported_type'
   return 'failed'
-}
-
-export function aiChatImageSrc(path: string): string {
-  try {
-    return convertFileSrc(path)
-  } catch {
-    return path
-  }
 }
 
 export function collectMessageImages(messages: readonly AiAgentMessage[]): string[] {
@@ -120,32 +99,6 @@ export function collectMessageImages(messages: readonly AiAgentMessage[]): strin
     }
   }
   return Array.from(unique)
-}
-
-function normalizePickedPath(value: string): string | null {
-  const trimmed = value.trim()
-  if (!trimmed) return null
-  if (!trimmed.startsWith('file://')) return trimmed
-
-  try {
-    const parsed = new URL(trimmed)
-    if (parsed.protocol !== 'file:') return trimmed
-    const decodedPath = decodeURIComponent(parsed.pathname)
-    if (parsed.hostname) return `//${parsed.hostname}${decodedPath}`
-    if (/^\/[A-Za-z]:/.test(decodedPath)) return decodedPath.slice(1)
-    return decodedPath
-  } catch {
-    return trimmed
-  }
-}
-
-export function normalizePickedImagePaths(selected: string | string[] | null): string[] {
-  if (!selected) return []
-  const items = Array.isArray(selected) ? selected : [selected]
-  return items
-    .filter((item): item is string => typeof item === 'string')
-    .map(normalizePickedPath)
-    .filter((item): item is string => item !== null)
 }
 
 async function readFileBytes(file: File): Promise<Uint8Array> {
@@ -243,12 +196,19 @@ export function subscribeSessionDraftImages(sessionId: string, listener: () => v
   }
 }
 
-export function takeSessionDraftImages(sessionId: string): string[] {
+function takeSessionDraftImages(sessionId: string): string[] {
   const current = getSessionDraftImages(sessionId)
   if (current.length === 0) return EMPTY_DRAFT_IMAGES
   sessionDraftImages.delete(sessionId)
   notifyDraftListeners(sessionId)
   return current
+}
+
+function sessionImagePaths(sessionId: string): string[] {
+  return [
+    ...collectMessageImages(aiWorkspaceSessionSnapshot(sessionId).messages),
+    ...getSessionDraftImages(sessionId),
+  ]
 }
 
 export function cleanupClosedConversationImages(
@@ -258,22 +218,19 @@ export function cleanupClosedConversationImages(
 ): void {
   const closedMessageImages = collectMessageImages(aiWorkspaceSessionSnapshot(closedSessionId).messages)
   const closedDraftImages = takeSessionDraftImages(closedSessionId)
-  const candidates = Array.from(new Set([...closedMessageImages, ...closedDraftImages]))
+  const candidates = [...closedMessageImages, ...closedDraftImages]
   if (candidates.length === 0) return
 
   const retained = new Set<string>()
   for (const sessionId of remainingSessionIds) {
     if (sessionId === closedSessionId) continue
-    for (const path of collectMessageImages(aiWorkspaceSessionSnapshot(sessionId).messages)) {
-      retained.add(path)
-    }
-    for (const path of getSessionDraftImages(sessionId)) {
+    for (const path of sessionImagePaths(sessionId)) {
       retained.add(path)
     }
   }
 
-  const toDelete = candidates.filter((path) => !retained.has(path))
-  if (toDelete.length > 0) {
-    void deleteAiChatImages(vaultPath, toDelete)
-  }
+  void deleteAiChatImages(
+    vaultPath,
+    candidates.filter((path) => !retained.has(path)),
+  )
 }

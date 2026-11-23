@@ -34,8 +34,10 @@ import {
 import {
   containsUnsupportedInlineContent,
   deleteToLineStart,
-  extractClipboardFiles,
+  extractDroppedImageFiles,
+  extractPastedImageFiles,
   hasUnsupportedClipboardPayload,
+  partitionDroppedImagePaths,
   submitInlineValue,
 } from './inlineWikilinkInputOperations'
 import { restorePendingRemountState } from './inlineWikilinkRemountState'
@@ -43,8 +45,6 @@ import { useNativePathDrop } from './useNativePathDrop'
 import { translate, type AppLocale } from '../lib/i18n'
 import {
   filenameFromPath,
-  isImageAttachmentCandidateFile,
-  isImageAttachmentCandidatePath,
   type AttachImagesPayload,
 } from '../lib/aiChatImages'
 import { createImageDropClaim } from '../utils/imageDropClaim'
@@ -200,24 +200,19 @@ export function InlineWikilinkInput(options: InlineWikilinkInputProps) {
     [editorRef, onChange, selectionRange, setSelectionRange, value],
   )
   const insertNativePathDrop = (paths: string[]) => {
-    if (onAttachImages) {
-      const imagePaths = paths.filter(isImageAttachmentCandidatePath)
-      const nonImagePaths = paths.filter((path) => !isImageAttachmentCandidatePath(path))
-      if (imagePaths.length > 0 && dropClaimRef.current.claim({
-        channel: 'native',
-        filenames: imagePaths.map(filenameFromPath),
-      })) {
-        onAttachImages({ paths: imagePaths })
-      }
-      const droppedPathText = formatDroppedPathList(nonImagePaths)
-      if (droppedPathText) insertTransferText(droppedPathText, true)
-      return
+    const { imagePaths, textPaths } = onAttachImages
+      ? partitionDroppedImagePaths(paths)
+      : { imagePaths: [], textPaths: paths }
+
+    if (
+      imagePaths.length > 0
+      && dropClaimRef.current.claim({ channel: 'native', filenames: imagePaths.map(filenameFromPath) })
+    ) {
+      onAttachImages?.({ paths: imagePaths })
     }
 
-    const droppedPathText = formatDroppedPathList(paths)
-    if (!droppedPathText) return
-
-    insertTransferText(droppedPathText, true)
+    const droppedPathText = formatDroppedPathList(textPaths)
+    if (droppedPathText) insertTransferText(droppedPathText, true)
   }
   useNativePathDrop({
     targetRef: editorRef,
@@ -350,29 +345,20 @@ export function InlineWikilinkInput(options: InlineWikilinkInputProps) {
     }
   }
   const handleDrop = (event: React.DragEvent<HTMLDivElement>) => {
-    if (disabled) return
-    if (!hasUnsupportedClipboardPayload(event.dataTransfer)) return
-
-    if (onAttachImages) {
-      const droppedFiles = Array.from(event.dataTransfer.files ?? [])
-      const imageFiles = droppedFiles.filter(isImageAttachmentCandidateFile)
-      if (imageFiles.length > 0) {
-        handledFileDropRef.current = true
-        event.preventDefault()
-        if (dropClaimRef.current.claim({
-          channel: 'dom',
-          filenames: imageFiles.map((file) => file.name),
-        })) {
-          onAttachImages({ files: imageFiles })
-        }
-        return
-      }
-    }
+    if (disabled || !hasUnsupportedClipboardPayload(event.dataTransfer)) return
 
     handledFileDropRef.current = true
-    const droppedPathText = extractDroppedPathText(event.dataTransfer)
     event.preventDefault()
 
+    const imageFiles = onAttachImages ? extractDroppedImageFiles(event.dataTransfer) : []
+    if (imageFiles.length > 0) {
+      if (dropClaimRef.current.claim({ channel: 'dom', filenames: imageFiles.map((file) => file.name) })) {
+        onAttachImages?.({ files: imageFiles })
+      }
+      return
+    }
+
+    const droppedPathText = extractDroppedPathText(event.dataTransfer)
     if (!droppedPathText) {
       notifyUnsupportedPaste()
       return
@@ -383,16 +369,11 @@ export function InlineWikilinkInput(options: InlineWikilinkInputProps) {
   const handlePaste = (event: React.ClipboardEvent<HTMLDivElement>) => {
     if (disabled) return
 
-    if (onAttachImages) {
-      const pastedFiles = extractClipboardFiles(event.clipboardData)
-      const hasImageItem = Array.from(event.clipboardData.items ?? []).some(
-        (item) => item.type.startsWith('image/'),
-      )
-      if (pastedFiles.some(isImageAttachmentCandidateFile) || (hasImageItem && pastedFiles.length > 0)) {
-        event.preventDefault()
-        onAttachImages({ files: pastedFiles })
-        return
-      }
+    const pastedImages = onAttachImages ? extractPastedImageFiles(event.clipboardData) : []
+    if (pastedImages.length > 0) {
+      event.preventDefault()
+      onAttachImages?.({ files: pastedImages })
+      return
     }
 
     if (hasUnsupportedClipboardPayload(event.clipboardData)) {

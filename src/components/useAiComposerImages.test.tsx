@@ -106,7 +106,7 @@ describe('useAiComposerImages', () => {
     ])
   })
 
-  it('deletes on removeImage, keeps files on consumeImages, and deletes on clearAndDeleteImages', async () => {
+  it('deletes on removeImage and keeps files on consumeImages', async () => {
     stagePathMock
       .mockResolvedValueOnce('/vault/.tolaria/tmp/1-a.png')
       .mockResolvedValueOnce('/vault/.tolaria/tmp/2-b.png')
@@ -136,15 +136,5 @@ describe('useAiComposerImages', () => {
     expect(consumed).toEqual(['/vault/.tolaria/tmp/2-b.png'])
     expect(result.current.images).toEqual([])
     expect(deleteImagesMock).not.toHaveBeenCalled()
-
-    stagePathMock.mockResolvedValueOnce('/vault/.tolaria/tmp/3-c.png')
-    await act(async () => {
-      await result.current.attachImages({ paths: ['/tmp/c.png'] })
-    })
-    act(() => {
-      result.current.clearAndDeleteImages()
-    })
-    expect(result.current.images).toEqual([])
-    expect(deleteImagesMock).toHaveBeenCalledWith('/vault', ['/vault/.tolaria/tmp/3-c.png'])
   })
 })

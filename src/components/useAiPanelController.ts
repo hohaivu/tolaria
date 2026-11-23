@@ -49,7 +49,7 @@ export interface AiPanelController {
   hasContext: boolean
   isActive: boolean
   permissionMode: AiAgentPermissionMode
-  handleSend: (text: string, references: NoteReference[], images?: string[]) => boolean | void
+  handleSend: (text: string, references: NoteReference[]) => boolean | void
   handleStop: () => void
   handleNavigateWikilink: (target: string) => void
   handlePermissionModeChange: (mode: AiAgentPermissionMode) => void
@@ -164,14 +164,13 @@ function useAiPanelActions({
   vaultPath: string
 }) {
   const handleSend = useCallback(
-    (text: string, references: NoteReference[], images?: string[]): boolean => {
-      const resolvedImages = images ?? composerImages.images
-      if ((!text.trim() && resolvedImages.length === 0) || isActive) return false
-      if (resolvedImages.length > 0 && !canTargetReadImagePaths({ agent: defaultAiAgent, target: defaultAiTarget })) {
-        void agent.sendMessage(text, references, resolvedImages)
+    (text: string, references: NoteReference[]): boolean => {
+      const images = composerImages.images
+      if ((!text.trim() && images.length === 0) || isActive) return false
+      void agent.sendMessage(text, references, images)
+      if (images.length > 0 && !canTargetReadImagePaths({ agent: defaultAiAgent, target: defaultAiTarget })) {
         return false
       }
-      void agent.sendMessage(text, references, resolvedImages)
       composerImages.consumeImages()
       setInput('')
       return true
@@ -183,12 +182,10 @@ function useAiPanelActions({
   }, [agent, isActive])
   const handleNavigateWikilink = useCallback((target: string) => onOpenNote?.(target), [onOpenNote])
   const handleNewChat = useCallback(() => {
-    const messageImages = collectMessageImages(agent.messages)
-    const draftImages = composerImages.consumeImages()
-    const pathsToDelete = Array.from(new Set([...messageImages, ...draftImages]))
-    if (pathsToDelete.length > 0) {
-      void deleteAiChatImages(vaultPath, pathsToDelete)
-    }
+    void deleteAiChatImages(vaultPath, [
+      ...collectMessageImages(agent.messages),
+      ...composerImages.consumeImages(),
+    ])
     agent.clearConversation()
     setInput('')
   }, [agent, composerImages, setInput, vaultPath])

@@ -1,15 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { invokeMock, mockInvokeMock, convertFileSrcMock, isTauriMock } = vi.hoisted(() => ({
+const { invokeMock, mockInvokeMock, isTauriMock } = vi.hoisted(() => ({
   invokeMock: vi.fn(),
   mockInvokeMock: vi.fn(),
-  convertFileSrcMock: vi.fn((path: string) => `asset://localhost/${encodeURIComponent(path)}`),
   isTauriMock: vi.fn(() => true),
 }))
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: invokeMock,
-  convertFileSrc: convertFileSrcMock,
 }))
 
 vi.mock('../mock-tauri', () => ({
@@ -19,13 +17,11 @@ vi.mock('../mock-tauri', () => ({
 
 import {
   MAX_AI_CHAT_IMAGE_BYTES,
-  aiChatImageSrc,
   classifyAiChatImageStageError,
   cleanupClosedConversationImages,
   clearAiChatImagesOnceForVault,
   deleteAiChatImages,
   getSessionDraftImages,
-  normalizePickedImagePaths,
   normalizeStagingFilename,
   setSessionDraftImages,
   stageAiChatImageFile,
@@ -150,19 +146,5 @@ describe('aiChatImages', () => {
     })
     expect(getSessionDraftImages('chat-a')).toEqual([])
     expect(getSessionDraftImages('chat-b')).toEqual(['/vault/.tolaria/tmp/5-other-draft.png'])
-  })
-
-  it('falls back safely when convertFileSrc throws and normalizes picked paths', () => {
-    expect(aiChatImageSrc('/vault/.tolaria/tmp/1-a.png')).toBe(
-      `asset://localhost/${encodeURIComponent('/vault/.tolaria/tmp/1-a.png')}`,
-    )
-    convertFileSrcMock.mockImplementationOnce(() => {
-      throw new Error('no internals')
-    })
-    expect(aiChatImageSrc('/vault/.tolaria/tmp/1-a.png')).toBe('/vault/.tolaria/tmp/1-a.png')
-
-    expect(normalizePickedImagePaths('file:///Users/test/My%20Shot.png')).toEqual(['/Users/test/My Shot.png'])
-    expect(normalizePickedImagePaths(['/a.png', 'file:///C:/dir/b.webp'])).toEqual(['/a.png', 'C:/dir/b.webp'])
-    expect(normalizePickedImagePaths(null)).toEqual([])
   })
 })

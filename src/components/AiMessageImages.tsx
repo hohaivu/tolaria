@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import { ImageBroken } from '@phosphor-icons/react'
-import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
-import { aiChatImageSrc, filenameFromPath } from '../lib/aiChatImages'
+import { ImageLightbox } from './ImageLightbox'
+import { filenameFromPath } from '../lib/aiChatImages'
 import { createTranslator, type AppLocale } from '../lib/i18n'
+import { safeAttachmentAssetUrlFromPath } from '../utils/vaultAttachments'
 
 interface AiMessageImagesProps {
   images: string[]
@@ -59,7 +60,7 @@ export function AiMessageImages({
               className="h-16 w-16 shrink-0 cursor-pointer overflow-hidden rounded-md border border-border bg-muted p-0 transition-opacity hover:opacity-90"
             >
               <img
-                src={aiChatImageSrc(path)}
+                src={safeAttachmentAssetUrlFromPath({ path })}
                 alt={filenameFromPath(path)}
                 className="h-full w-full object-cover"
                 onError={() => markFailed(path)}
@@ -68,23 +69,13 @@ export function AiMessageImages({
           )
         ))}
       </div>
-      <Dialog open={previewPath !== null} onOpenChange={(open) => { if (!open) setPreviewPath(null) }}>
-        <DialogContent
-          aria-describedby={undefined}
-          data-testid="ai-image-preview-dialog"
-          className="flex max-h-[90vh] max-w-[90vw] items-center justify-center border-none bg-transparent p-0 shadow-none sm:max-w-[90vw]"
-        >
-          <DialogTitle className="sr-only">{previewTitle}</DialogTitle>
-          {previewPath && (
-            <img
-              data-testid="ai-image-preview-image"
-              src={aiChatImageSrc(previewPath)}
-              alt={filenameFromPath(previewPath)}
-              className="max-h-[85vh] max-w-[85vw] rounded-md object-contain shadow-2xl"
-            />
-          )}
-        </DialogContent>
-      </Dialog>
+      <ImageLightbox
+        image={previewPath
+          ? { src: safeAttachmentAssetUrlFromPath({ path: previewPath }), alt: filenameFromPath(previewPath) }
+          : null}
+        locale={locale}
+        onClose={() => setPreviewPath(null)}
+      />
     </>
   )
 }

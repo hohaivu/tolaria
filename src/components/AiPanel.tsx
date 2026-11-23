@@ -218,13 +218,12 @@ export function AiPanelView(options: AiPanelViewProps) {
         enabled: interactive,
       })
       const handleComposerSend = useCallback(
-        (text: string, references: Parameters<typeof handleSend>[1], images?: string[]) => {
-          const resolvedImages = images ?? controller.composerImages?.images ?? []
-          if ((!text.trim() && resolvedImages.length === 0) || isActive) return
-          const accepted = handleSend(text, references, images)
-          if (accepted !== false) onSendPrompt?.(text)
+        (text: string, references: Parameters<typeof handleSend>[1]) => {
+          const hasImages = (controller.composerImages?.images.length ?? 0) > 0
+          if ((!text.trim() && !hasImages) || isActive) return
+          if (handleSend(text, references) !== false) onSendPrompt?.(text)
         },
-        [controller.composerImages?.images, handleSend, isActive, onSendPrompt],
+        [controller.composerImages?.images.length, handleSend, isActive, onSendPrompt],
       )
 
       return (

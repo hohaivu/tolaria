@@ -61,7 +61,7 @@ interface AiPanelComposerProps {
   controls?: ReactNode
   composerImages?: AiPanelComposerImagesController
   onChange: (value: string) => void
-  onSend: (text: string, references: NoteReference[], images?: string[]) => void
+  onSend: (text: string, references: NoteReference[]) => void
   onStop: () => void
   onUnsupportedAiPaste?: (message: string) => void
 }
@@ -194,17 +194,15 @@ function ComposerAttachButton({
 function ComposerSendButton({
   canSend,
   entries,
-  images,
   input,
   label,
   onSend,
 }: {
   canSend: boolean
   entries: VaultEntry[]
-  images: string[]
   input: string
   label: string
-  onSend: (text: string, references: NoteReference[], images?: string[]) => void
+  onSend: (text: string, references: NoteReference[]) => void
 }) {
   return (
     <Button
@@ -213,7 +211,7 @@ function ComposerSendButton({
       size="icon-sm"
       className="shrink-0 flex items-center justify-center border-none cursor-pointer transition-colors"
       style={composerSendButtonStyle(canSend)}
-      onClick={() => onSend(input, extractInlineWikilinkReferences(input, entries), images)}
+      onClick={() => onSend(input, extractInlineWikilinkReferences(input, entries))}
       disabled={!canSend}
       aria-label={label}
       title={label}
@@ -581,7 +579,6 @@ export function AiPanelComposer(options: AiPanelComposerProps) {
     <ComposerSendButton
       canSend={canSend}
       entries={entries}
-      images={images}
       input={input}
       label={t('ai.panel.send')}
       onSend={onSend}
@@ -617,7 +614,7 @@ export function AiPanelComposer(options: AiPanelComposerProps) {
               locale={locale}
               onAttachImages={composerImages?.attachImages}
               onChange={onChange}
-              onSend={(text, references) => onSend(text, references, images)}
+              onSend={onSend}
               onUnsupportedAiPaste={onUnsupportedAiPaste}
               placeholder={placeholder}
               submitOnEmpty={images.length > 0}

@@ -1,3 +1,4 @@
+import { isImageAttachmentCandidateFile, isImageAttachmentCandidatePath } from '../lib/aiChatImages'
 import type { NoteReference } from '../utils/ai-context'
 import type { InlineSelectionRange } from './inlineWikilinkDom'
 import { replaceInlineSelection } from './inlineWikilinkEdits'
@@ -9,7 +10,7 @@ export function hasUnsupportedClipboardPayload(clipboardData: DataTransfer) {
   return Array.from(clipboardData.items).some((item) => item.kind === 'file' || item.type.startsWith('image/'))
 }
 
-export function extractClipboardFiles(clipboardData: DataTransfer): File[] {
+function extractClipboardFiles(clipboardData: DataTransfer): File[] {
   const files = Array.from(clipboardData.files ?? [])
   if (files.length > 0) return files
 
@@ -20,6 +21,30 @@ export function extractClipboardFiles(clipboardData: DataTransfer): File[] {
     if (file) itemFiles.push(file)
   }
   return itemFiles
+}
+
+export function partitionDroppedImagePaths(paths: string[]): { imagePaths: string[]; textPaths: string[] } {
+  const imagePaths: string[] = []
+  const textPaths: string[] = []
+  for (const path of paths) {
+    if (isImageAttachmentCandidatePath(path)) imagePaths.push(path)
+    else textPaths.push(path)
+  }
+  return { imagePaths, textPaths }
+}
+
+export function extractDroppedImageFiles(dataTransfer: DataTransfer): File[] {
+  return extractClipboardFiles(dataTransfer).filter(isImageAttachmentCandidateFile)
+}
+
+export function extractPastedImageFiles(clipboardData: DataTransfer): File[] {
+  const pastedFiles = extractClipboardFiles(clipboardData)
+  const hasImageItem = Array.from(clipboardData.items ?? []).some(
+    (item) => item.type.startsWith('image/'),
+  )
+  return pastedFiles.some(isImageAttachmentCandidateFile) || (hasImageItem && pastedFiles.length > 0)
+    ? pastedFiles
+    : []
 }
 
 export function containsUnsupportedInlineContent(editor: HTMLDivElement) {
