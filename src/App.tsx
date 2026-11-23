@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createRemoteVaultBackend, type RemoteBindings } from '../packages/collab-client/src/remoteVaultBackend'
+import { clearAiChatImagesOnceForVault } from './lib/aiChatImages'
 import { AiWorkspaceFloatingButton } from './components/AiWorkspaceFloatingButton'
 import { AiWorkspaceWindowApp } from './components/AiWorkspaceWindowApp'
 import { AppAiWorkspaceSurface } from './components/AppAiWorkspaceSurface'
@@ -657,6 +658,12 @@ function MainApp({ noteWindowParams }: { noteWindowParams: NoteWindowParams | nu
       cancelled = true
     }
   }, [watchedVaultPaths])
+  useEffect(() => {
+    if (noteWindowParams || watchedVaultPaths.length === 0) return
+    for (const vaultPath of watchedVaultPaths) {
+      void clearAiChatImagesOnceForVault(vaultPath)
+    }
+  }, [noteWindowParams, watchedVaultPaths])
   useVaultWatcher({
     vaultPath: resolvedPath,
     vaultPaths: watchedVaultPaths,

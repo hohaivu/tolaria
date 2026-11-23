@@ -1,6 +1,8 @@
 import { memo, useCallback, useEffect, useRef, type CSSProperties, type ReactNode } from 'react'
-import { Sparkle, X, PaperPlaneRight, Plus, Link, Stop } from '@phosphor-icons/react'
+import { Sparkle, X, PaperPlaneRight, Plus, Link, Stop, Paperclip } from '@phosphor-icons/react'
 import { AiMessage } from './AiMessage'
+import { AiComposerImageStrip } from './AiComposerImageStrip'
+import type { AiPanelComposerImagesController } from './useAiComposerImages'
 import { shouldFollowTranscript } from './aiPanelScroll'
 import { Button } from '@/components/ui/button'
 import { ActionTooltip } from '@/components/ui/action-tooltip'
@@ -8,6 +10,7 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 import { WikilinkChatInput } from './WikilinkChatInput'
 import { extractInlineWikilinkReferences } from './inlineWikilinkText'
 import { aiAgentPermissionModeLabels, type AiAgentPermissionMode } from '../lib/aiAgentPermissionMode'
+import type { AttachImagesPayload } from '../lib/aiChatImages'
 import { createTranslator, type AppLocale } from '../lib/i18n'
 import type { AiAgentMessage } from '../hooks/useCliAiAgent'
 import type { AiAgentReadiness } from '../lib/aiAgents'
@@ -56,11 +59,14 @@ interface AiPanelComposerProps {
   inputRef: React.RefObject<HTMLDivElement | null>
   isActive: boolean
   controls?: ReactNode
+  composerImages?: AiPanelComposerImagesController
   onChange: (value: string) => void
-  onSend: (text: string, references: NoteReference[]) => void
+  onSend: (text: string, references: NoteReference[], images?: string[]) => void
   onStop: () => void
   onUnsupportedAiPaste?: (message: string) => void
 }
+
+const EMPTY_COMPOSER_IMAGES: string[] = []
 
 function getComposerPlaceholder(
   agentLabel: string,
@@ -106,20 +112,38 @@ function ComposerInput(options: {
   hasControls: boolean
   input: string
   inputRef: React.RefObject<HTMLDivElement | null>
+  locale?: AppLocale
+  onAttachImages?: (payload: AttachImagesPayload) => void
   onChange: (value: string) => void
   onSend: (text: string, references: NoteReference[]) => void
   onUnsupportedAiPaste?: (message: string) => void
   placeholder: string
+  submitOnEmpty?: boolean
 }) {
-  const { disabled, entries, hasControls, input, inputRef, onChange, onSend, onUnsupportedAiPaste, placeholder } =
-    options
+  const {
+    disabled,
+    entries,
+    hasControls,
+    input,
+    inputRef,
+    locale,
+    onAttachImages,
+    onChange,
+    onSend,
+    onUnsupportedAiPaste,
+    placeholder,
+    submitOnEmpty,
+  } = options
   return (
     <WikilinkChatInput
       entries={entries}
       value={input}
+      locale={locale}
       onChange={onChange}
       onSend={onSend}
+      onAttachImages={onAttachImages}
       onUnsupportedPaste={onUnsupportedAiPaste}
+      submitOnEmpty={submitOnEmpty}
       disabled={disabled}
       placeholder={placeholder}
       placeholderClassName={hasControls ? 'px-2 py-1.5 text-[13px] leading-5' : undefined}
@@ -137,18 +161,50 @@ function ComposerInput(options: {
   )
 }
 
+function ComposerAttachButton({
+  disabled,
+  label,
+  onPick,
+}: {
+  disabled: boolean
+  label: string
+  onPick: () => void
+}) {
+  return (
+    <TooltipProvider>
+      <ActionTooltip copy={{ label }} side="top">
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          className="shrink-0 flex items-center justify-center border-none text-muted-foreground hover:text-foreground"
+          style={{ width: 30, height: 30 }}
+          onClick={onPick}
+          disabled={disabled}
+          aria-label={label}
+          data-testid="agent-attach-image"
+        >
+          <Paperclip size={16} />
+        </Button>
+      </ActionTooltip>
+    </TooltipProvider>
+  )
+}
+
 function ComposerSendButton({
   canSend,
   entries,
+  images,
   input,
   label,
   onSend,
 }: {
   canSend: boolean
   entries: VaultEntry[]
+  images: string[]
   input: string
   label: string
-  onSend: (text: string, references: NoteReference[]) => void
+  onSend: (text: string, references: NoteReference[], images?: string[]) => void
 }) {
   return (
     <Button
@@ -157,7 +213,7 @@ function ComposerSendButton({
       size="icon-sm"
       className="shrink-0 flex items-center justify-center border-none cursor-pointer transition-colors"
       style={composerSendButtonStyle(canSend)}
-      onClick={() => onSend(input, extractInlineWikilinkReferences(input, entries))}
+      onClick={() => onSend(input, extractInlineWikilinkReferences(input, entries), images)}
       disabled={!canSend}
       aria-label={label}
       title={label}
@@ -187,20 +243,32 @@ function ComposerStopButton({ label, onStop }: { label: string; onStop: () => vo
 }
 
 function ComposerControlsRow({
+  attachButton,
   children,
   hasControls,
   sendButton,
 }: {
+  attachButton?: ReactNode
   children?: ReactNode
   hasControls: boolean
   sendButton: ReactNode
 }) {
-  if (!hasControls) return <>{sendButton}</>
+  if (!hasControls) {
+    return (
+      <div className="flex shrink-0 items-center gap-1">
+        {attachButton}
+        {sendButton}
+      </div>
+    )
+  }
 
   return (
     <div className="mt-0.5 flex items-center justify-between gap-2">
       <div className="flex min-w-0 flex-1 items-center gap-1">{children}</div>
-      {sendButton}
+      <div className="flex shrink-0 items-center gap-1">
+        {attachButton}
+        {sendButton}
+      </div>
     </div>
   )
 }
@@ -488,6 +556,7 @@ export function AiPanelComposer(options: AiPanelComposerProps) {
     inputRef,
     isActive,
     controls,
+    composerImages,
     onChange,
     onSend,
     onStop,
@@ -495,38 +564,74 @@ export function AiPanelComposer(options: AiPanelComposerProps) {
   } = options
   const t = createTranslator(locale)
   const composerDisabled = isActive || agentReadiness !== 'ready'
-  const canSend = !composerDisabled && input.trim().length > 0
+  const images = composerImages?.images ?? EMPTY_COMPOSER_IMAGES
+  const canSend = !composerDisabled && (input.trim().length > 0 || images.length > 0)
   const placeholder = getComposerPlaceholder(agentLabel, agentReadiness, t)
   const hasControls = controls !== undefined && controls !== null
+  const attachButton = composerImages ? (
+    <ComposerAttachButton
+      disabled={composerDisabled}
+      label={t('ai.panel.images.attach')}
+      onPick={() => void composerImages.pickImages()}
+    />
+  ) : null
   const sendButton = isActive ? (
     <ComposerStopButton label={t('ai.panel.stop')} onStop={onStop} />
   ) : (
-    <ComposerSendButton canSend={canSend} entries={entries} input={input} label={t('ai.panel.send')} onSend={onSend} />
-      )
+    <ComposerSendButton
+      canSend={canSend}
+      entries={entries}
+      images={images}
+      input={input}
+      label={t('ai.panel.send')}
+      onSend={onSend}
+    />
+  )
+  const imageStrip = composerImages ? (
+    <AiComposerImageStrip
+      images={images}
+      disabled={composerDisabled}
+      locale={locale}
+      onRemove={composerImages.removeImage}
+    />
+  ) : null
 
   return (
     <div className="flex shrink-0 flex-col" style={{ padding: '6px 10px' }}>
-    <div
+      <div
         className={cn(
-        hasControls ? 'rounded-xl border border-border bg-background px-2 py-1.5 shadow-xs' : 'flex items-end gap-2',
+          hasControls
+            ? 'rounded-xl border border-border bg-background px-2 py-1.5 shadow-xs'
+            : 'flex flex-col gap-1.5',
         )}
       >
-        <div className={cn('min-w-0 flex-1', hasControls && 'w-full')}>
-          <ComposerInput
-            disabled={composerDisabled}
-            entries={entries}
-            hasControls={hasControls}
-            input={input}
-            inputRef={inputRef}
-            onChange={onChange}
-            onSend={onSend}
-            onUnsupportedAiPaste={onUnsupportedAiPaste}
-            placeholder={placeholder}
-          />
+        {imageStrip}
+        <div className={cn(!hasControls && 'flex items-end gap-2')}>
+          <div className={cn('min-w-0 flex-1', hasControls && 'w-full')}>
+            <ComposerInput
+              disabled={composerDisabled}
+              entries={entries}
+              hasControls={hasControls}
+              input={input}
+              inputRef={inputRef}
+              locale={locale}
+              onAttachImages={composerImages?.attachImages}
+              onChange={onChange}
+              onSend={(text, references) => onSend(text, references, images)}
+              onUnsupportedAiPaste={onUnsupportedAiPaste}
+              placeholder={placeholder}
+              submitOnEmpty={images.length > 0}
+            />
+          </div>
+          {!hasControls && (
+            <ComposerControlsRow hasControls={false} attachButton={attachButton} sendButton={sendButton} />
+          )}
         </div>
-        <ComposerControlsRow hasControls={hasControls} sendButton={sendButton}>
-          {controls}
-        </ComposerControlsRow>
+        {hasControls && (
+          <ComposerControlsRow hasControls={true} attachButton={attachButton} sendButton={sendButton}>
+            {controls}
+          </ComposerControlsRow>
+        )}
       </div>
     </div>
   )

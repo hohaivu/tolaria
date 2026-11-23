@@ -218,12 +218,13 @@ export function AiPanelView(options: AiPanelViewProps) {
         enabled: interactive,
       })
       const handleComposerSend = useCallback(
-        (text: string, references: Parameters<typeof handleSend>[1]) => {
-        if (!text.trim() || isActive) return
-        onSendPrompt?.(text)
-        handleSend(text, references)
+        (text: string, references: Parameters<typeof handleSend>[1], images?: string[]) => {
+          const resolvedImages = images ?? controller.composerImages?.images ?? []
+          if ((!text.trim() && resolvedImages.length === 0) || isActive) return
+          const accepted = handleSend(text, references, images)
+          if (accepted !== false) onSendPrompt?.(text)
         },
-        [handleSend, isActive, onSendPrompt],
+        [controller.composerImages?.images, handleSend, isActive, onSendPrompt],
       )
 
       return (
@@ -263,6 +264,7 @@ export function AiPanelView(options: AiPanelViewProps) {
             inputRef={inputRef}
             isActive={isActive}
             controls={composerControls}
+            composerImages={controller.composerImages}
             onChange={setInput}
             onSend={handleComposerSend}
             onStop={handleStop}
@@ -312,6 +314,7 @@ export function AiPanelView(options: AiPanelViewProps) {
     onOpenNote,
     onFileCreated,
     onFileModified,
+    onUnsupportedAiPaste,
     onVaultChanged,
   })
 

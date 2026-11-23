@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 import { arrayMove } from '@dnd-kit/sortable'
 import type { AiAgentId } from '../lib/aiAgents'
+import { cleanupClosedConversationImages } from '../lib/aiChatImages'
 import { agentTargets, type AiTarget } from '../lib/aiTargets'
 import { translate, type AppLocale } from '../lib/i18n'
 import type { AiWorkspaceConversationSetting } from '../types'
@@ -34,6 +35,7 @@ interface UseConversationsOptions {
   onSettingsChange?: (conversations: AiWorkspaceConversationSetting[]) => void
   settings?: AiWorkspaceConversationSetting[] | null
   settingsReady: boolean
+  vaultPath?: string
 }
 
 interface CloseConversationOptions {
@@ -371,6 +373,7 @@ export function useConversations({
   onSettingsChange,
   settings,
   settingsReady,
+  vaultPath,
 }: UseConversationsOptions) {
   const [conversations, setConversations] = useState<AiConversation[]>(() => {
     const stored = conversationsFromSettings(settings, fallbackTarget, locale)
@@ -401,10 +404,17 @@ export function useConversations({
   }, [conversations])
 
   const closeConversation = useCallback((id: ConversationId) => {
+    const closing = conversations.find((conversation) => conversation.id === id)
     const next = closeConversationState(conversations, { activeId, fallbackModelId, fallbackTarget, id, locale })
     setConversations(next.conversations)
     setActiveId(next.activeId)
-  }, [activeId, conversations, fallbackModelId, fallbackTarget, locale])
+    if (closing && vaultPath) {
+      const remainingIds = next.conversations
+        .filter((conversation) => conversation.id !== id && !conversation.archived)
+        .map((conversation) => conversation.id)
+      cleanupClosedConversationImages(id, vaultPath, remainingIds)
+    }
+  }, [activeId, conversations, fallbackModelId, fallbackTarget, locale, vaultPath])
 
   const restoreConversation = useCallback((id: ConversationId) => {
     setConversations((current) => restoreConversationState(current, id))

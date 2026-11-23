@@ -575,6 +575,7 @@ function ConversationSession(functionOptions: ConversationSessionProps) {
     onOpenNote,
     onFileCreated,
     onFileModified,
+    onUnsupportedAiPaste,
     onVaultChanged,
     sessionId: conversation.id,
   })
@@ -888,6 +889,7 @@ function useAiWorkspaceModel(workspace: ResolvedAiWorkspaceProps): AiWorkspaceMo
     onSettingsChange: workspace.onConversationSettingsChange,
     settings: workspace.conversationSettings,
     settingsReady: workspace.conversationSettingsReady ?? true,
+    vaultPath: workspace.vaultPath,
   })
   const [statuses, setStatuses] = useState<Record<string, AgentStatus>>({})
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true)
