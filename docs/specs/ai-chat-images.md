@@ -1,0 +1,139 @@
+---
+type: Note
+_organized: true
+---
+
+# AI chat image attachments
+
+The AI chat image attachment domain lets a user send up to four images with a message to a local CLI agent. The app stores each image inside the vault, and the agent reads the file from its path. This domain covers the composer, the staging files, the prompt contract, the vision gate, the cleanup, and the analytics.
+
+## Terms
+
+- **Staged image**: a copy of a user image in the vault folder `<vault>/.tolaria/tmp/`. The name has the form `<millis>-<name>`.
+- **Draft image**: a staged image that the composer holds before send.
+- **Message image**: a staged image that a sent user message keeps.
+- **Vision gate**: the check that blocks a send when the target cannot read an image path.
+- **Owner**: a conversation that keeps its staged images on disk. The word means a conversation, not a person. A released conversation is not an owner.
+- **Released conversation**: a closed conversation. It keeps its message paths for history but owns no files.
+- **Staging vault**: the vault whose `.tolaria/tmp/` folder holds a staged image. It can differ from the active editor vault.
+
+## Entry points
+
+| Entry point | Code | Notes |
+| --- | --- | --- |
+| Paste | `src/components/InlineWikilinkInput.tsx` (`handlePaste`) | Image files go to `onAttachImages`. Other unsupported payloads show a toast. |
+| Drop (DOM) | `InlineWikilinkInput.tsx` (`handleDrop`) | Image files go to `onAttachImages`. |
+| Drop (native path) | `InlineWikilinkInput.tsx` (`insertNativePathDrop`) | Image paths go to `onAttachImages`. Other paths insert as text. |
+| Paperclip button | `src/components/AiPanelChrome.tsx` (`ComposerAttachButton`) | Opens the Tauri file picker. |
+| Composer hook | `src/components/useAiComposerImages.ts` | Owns the draft list, staging, removal, and the cleanup on a vault switch. |
+
+The picker and native drop paths keep their bytes. `normalizeDialogPaths` in `src/utils/vault-dialog.ts` decodes only `file://` URLs. Reason: a folder name can end in a space.
+
+`AiPanelComposer` in `src/components/AiPanelChrome.tsx` serves both the AI panel and the AI workspace window. The command palette AI mode does not pass `onAttachImages`. It keeps the text-only paste and drop behaviour.
+
+## Flows and states
+
+1. The user adds an image through paste, drop, or the paperclip.
+2. The frontend checks the MIME type and the size of pasted and dropped image data. A picked or dropped file path goes to a staging command without a frontend size check. The Rust command checks the size (see "Limits and checks").
+3. The Rust side checks the file and writes the staged copy. It returns the absolute path. The composer shows a thumbnail.
+4. The user sends the message. The request carries the paths in `attachments`.
+5. The Rust side appends the paths to the prompt. The message keeps the paths.
+6. The bubble shows the thumbnails. A click opens `ImageLightbox`.
+
+A message with images has one of these outcomes:
+
+- **Sent**: the composer clears its draft list. The files stay on disk for the message.
+- **Blocked by the vision gate**: the composer keeps the draft images. A toast names the target.
+- **Failed to stage**: a toast explains the reason.
+
+## Limits and checks
+
+- Each message takes at most 4 images. Reason: the owner chose this limit.
+- Each image takes at most 15 MiB. Reason: the owner chose this limit.
+- Allowed types are PNG, JPEG, GIF, and WebP. Reason: the owner chose these types.
+- HEIC and HEIF are rejected on the client. Reason: the owner chose to reject them, as the note drop does.
+- The Rust side checks the extension and the size before it writes any staged file. Reason: the staging command accepts data and paths from the renderer.
+- A picked or dropped file that is too large reaches the staging command. The command rejects it before it writes any staged file. Reason: not stated in the code.
+- Rejected files never become staged files. The app shows a toast and never drops a file silently. Reason: the owner chose visible rejection.
+
+## Storage
+
+- `src-tauri/src/ai_chat_images.rs` writes staged images to `<vault>/.tolaria/tmp/`. Reason: the vault scan and search skip folders that start with `.`, so staged files do not appear as notes.
+- The module adds `.tolaria/` to `.git/info/exclude` once. It acts only when `.git` is a real directory. It skips the write when `.git/info` or `.git/info/exclude` is a link. Reason: the owner chose a local exclude, so the user `.gitignore` stays unchanged.
+- The module never writes `.gitignore`. Reason: the user owns that file.
+- The module deletes files only when they are direct children of the canonical tmp folder. The tmp folder must be a real directory, not a link, on both `.tolaria` and `tmp`. Reason: the code states that links must not let staging, prompt validation, cleanup, or asset scoping leave the vault.
+
+## Prompt contract
+
+- `AiAgentStreamRequest` has an `attachments` field. Old callers that omit it get an empty list. Reason: the field uses `#[serde(default)]`.
+- `prepare_attachments()` in `src-tauri/src/ai_agents.rs` runs before the agent adapter starts. It runs for all eight agents.
+- `prepare_attachments()` checks each path. Each path must be a regular file directly inside the canonical tmp folder.
+- `append_attachments_to_message` adds an "Attached images" block to the message text. The block lists the paths in request order.
+- The append step is idempotent. A block counts only on whole lines, so a longer file name with the same prefix does not match. Reason: a longer file name that shares the prefix must not satisfy the check.
+- No CLI image flag changes. Reason: the design chose one path in the prompt for all eight agents.
+
+## Vision gate
+
+- `canTargetReadImagePaths` in `src/lib/aiAgentSession.ts` returns false for API-model targets.
+- For CLI agents, the same function returns the agent flag `readsImagePaths`. All eight CLI agents set the flag to true.
+- A blocked send does not reach `streamAiAgent`. The toast `ai.panel.images.unsupported` names the target.
+- The analytics event `ai_agent_message_blocked` carries the reason `images_unsupported`.
+- Reason for the API-model rule: the only tool for API models is `create_note`, so the model cannot read a path.
+
+## Lifecycle and cleanup
+
+| Event | Action | Code |
+| --- | --- | --- |
+| App start (main window) | Clears the tmp folder once for each vault path in the run | `clearAiChatImagesOnceForVault` in `src/App.tsx` |
+| Workspace window | Never clears the tmp folder. The window routes to its own app before the main window mounts. | `src/App.tsx` (`aiWorkspaceWindow` return, line 171) |
+| Draft image removed | Deletes that file | `useAiComposerImages.removeImage` |
+| New chat or palette prompt | Clears the conversation. Deletes its images that no other session owns | `resetConversation` in `src/components/useAiPanelController.ts` |
+| Conversation closed | Sets `released` on the conversation. Deletes its message and draft images that no remaining session owns | `cleanupClosedConversationImages` in `src/lib/aiChatImages.ts`, called by `closeConversation` in `src/components/aiWorkspaceConversations.ts` |
+| Conversation archived | Keeps ownership. Deletes nothing | `archiveConversation` in `src/components/aiWorkspaceConversations.ts` |
+| Conversation restored | Clears `released`. The conversation owns its paths again | `reclaimSessionImages` in `src/lib/aiChatImages.ts`, called by `restoreConversation` |
+| Vault switch with no session (composer) | Retires in-flight staging. Deletes the draft images under the previous vault | Effect in `useAiComposerImages` |
+| Message regenerated | Deletes the images of the discarded later turns, except images that the regenerated message reuses and paths that another session still uses | `releaseUnownedImages` in `src/lib/aiChatImages.ts`, called from `regenerateMessage` in `src/hooks/useCliAiAgent.ts` |
+
+- Reason for the startup clear: staged files do not outlive the app run.
+- Reason for keeping shared paths: a fork copies the paths of its source, so one path can appear in more than one session. The file stays until no owner remains.
+- An archived fork stays an owner. Reason: you can restore it, and it must still show its images.
+- A closed conversation is not an owner. Its messages keep the paths and show placeholders after the file is deleted.
+- The `released` flag lives in the session snapshot in `src/lib/aiWorkspaceSessionStore.ts`. Every window reads the same flag. Reason: a recreated renderer must keep a closed conversation released. Test: `src/lib/aiChatImagesOwnership.test.ts`.
+- Cleanup deletes each path in its staging vault. A path outside `.tolaria/tmp/` uses the vault that the caller passes. Reason: the active editor vault can differ from the vault that staged the file. Native confinement still checks each vault.
+- A palette prompt uses the same reset as New chat. The queued prompt carries text only. Reason: not stated in the code.
+- A session draft is not cleared on a vault switch. Reason: not stated in the code.
+- A missing file renders a placeholder in the bubble. Reason: a restart clears the files, but sessions keep the paths.
+
+## Draft admission and discard
+
+- `sendMessage` in `src/hooks/useCliAiAgent.ts` takes an `onAdmitted` callback. The callback runs once when the send is admitted.
+- `discardImages` calls `retireSessionDraft`. That call raises the session draft epoch.
+- A staging result that finishes after the epoch changes is deleted and reports `discarded`. Reason: a late result must not add a draft to a session that the user already reset or closed.
+
+## Sessions and persistence
+
+- Sessions store paths only. No base64 data and no file bytes enter a session. Reason: the design chose paths only.
+- `AiAgentMessage.images` and `PendingUserPrompt.images` hold the paths.
+
+## Analytics
+
+- `ai_agent_message_sent` carries `image_count`. The value is 0 when no image is sent.
+- `ai_agent_message_blocked` carries the reason `images_unsupported`.
+- The events carry counts only. They never carry paths or file names. Reason: ADR 0101 forbids paths and file names in product analytics.
+
+## Copy
+
+- All copy comes from keys under `ai.panel.images.*` and `ai.panel.unsupportedPaste` in `src/lib/locales/en.json`.
+- The paste message moved from a constant in `InlineWikilinkInput.tsx` to `en.json`.
+
+## Related decisions
+
+- [ADR 0308](../adr/0308-ai-chat-image-temp-folder.md): in-vault tmp folder and local git exclude.
+- [ADR 0092](../adr/0092-vault-ai-agent-permission-modes.md): agents run from the vault folder, so the tmp folder stays in their working directory.
+- [ADR 0101](../adr/0101-categorical-product-analytics-events.md): categorical analytics only.
+
+## Open questions
+
+- Agent path reads are confirmed by a real run for two agents only. The ignored tests `real_claude_reads_staged_image` and `real_pi_reads_staged_image` in `src-tauri/src/ai_chat_images_tests.rs` ask the agent to read a staged image and check that the answer contains "red". The other six agents are not confirmed. Each agent may treat `.tolaria/` as hidden when it searches. A direct path read should still work.
+- The thumbnail load from `.tolaria/tmp` through the asset protocol is not confirmed in `pnpm tauri dev`. The bubble and strip show a placeholder when a load fails.
+- API-model targets with vision cannot receive images. Base64 image content for API models is a follow-up.

@@ -148,6 +148,39 @@ describe('aiAgentStreamCallbacks', () => {
     expect(output).toContain('[Tool output truncated: 50 chars omitted]')
   })
 
+  it('strips image bytes from attachment-read tool output before it reaches the transcript', () => {
+    const base64 = 'iVBORw0KGgo'.repeat(10)
+    const piResult = JSON.stringify({
+      content: [
+        { type: 'text', text: 'Read image file [image/png]' },
+        { type: 'image', data: base64, mimeType: 'image/png' },
+      ],
+      structuredContent: { image: { mimeType: 'image/png', data: base64 }, note: `data:image/png;base64,${base64}` },
+    })
+    const messages = createMessageStore([
+      { id: 'msg-1', userMessage: 'Look', actions: [], isStreaming: true },
+    ])
+    const callbacks = createStreamCallbacks({
+      agent: 'pi',
+      messageId: 'msg-1',
+      vaultPath: '/vault',
+      setMessages: messages.setMessages,
+      setStatus: createStatusStore().setStatus,
+      abortRef: { current: { aborted: false } },
+      responseAccRef: { current: '' },
+      toolInputMapRef: { current: new Map() },
+      fileCallbacksRef: { current: undefined },
+    })
+
+    callbacks.onToolStart('read', 'tool-1')
+    callbacks.onToolDone('tool-1', piResult)
+
+    const output = messages.getMessages()[0].actions[0].output ?? ''
+    expect(output).not.toContain(base64)
+    expect(output).toContain('Read image file [image/png]')
+    expect(output).toContain('[image data omitted]')
+  })
+
   it('keeps failed MCP create_note results from reporting a created file', () => {
     const messages = createMessageStore([
       {

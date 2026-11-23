@@ -243,4 +243,47 @@ describe('AiMessage', () => {
     fireEvent.click(headers[0])
     expect(screen.getAllByTestId('action-card-details')).toHaveLength(1)
   })
+
+  it('renders image thumbnails in the user bubble and opens a dialog preview on click', () => {
+    const imagePath = '/vault/.tolaria/tmp/1700000000001-diagram.png'
+    render(
+      <AiMessage
+        userMessage="Look at this"
+        images={[imagePath]}
+        actions={[]}
+      />,
+    )
+
+    const thumbBtn = screen.getByTestId('message-image-thumbnail')
+    expect(thumbBtn).toHaveAttribute('data-slot', 'button')
+    expect(screen.getByRole('button', { name: 'Image preview' })).toBe(thumbBtn)
+    const thumbImg = thumbBtn.querySelector('img')
+    expect(thumbImg).toHaveAttribute('alt', '1700000000001-diagram.png')
+
+    fireEvent.click(thumbBtn)
+    expect(screen.getByTestId('image-lightbox')).toBeTruthy()
+    expect(screen.getByTestId('image-lightbox-image')).toHaveAttribute('alt', '1700000000001-diagram.png')
+  })
+
+  it('shows a placeholder when a saved message image fails to load and omits empty text blocks', () => {
+    const imagePath = '/vault/.tolaria/tmp/1700000000002-cleared.png'
+    render(
+      <AiMessage
+        userMessage=""
+        images={[imagePath]}
+        actions={[]}
+      />,
+    )
+
+    const thumbBtn = screen.getByTestId('message-image-thumbnail')
+    const bubble = screen.getByTestId('message-images').parentElement!
+    expect(bubble.textContent).toBe('')
+
+    const thumbImg = thumbBtn.querySelector('img')!
+    fireEvent.error(thumbImg)
+
+    expect(screen.queryByTestId('message-image-thumbnail')).toBeNull()
+    const placeholder = screen.getByTestId('message-image-placeholder')
+    expect(placeholder.textContent).toContain('Image unavailable')
+  })
 })

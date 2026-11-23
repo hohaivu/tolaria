@@ -1,12 +1,13 @@
 import { useState } from 'react'
-import { describe, it, expect, vi } from 'vitest'
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest'
 import { render as rtlRender, screen, fireEvent, act, waitFor } from '@testing-library/react'
 import { AiPanel, AiPanelView } from './AiPanel'
-import { UNSUPPORTED_INLINE_PASTE_MESSAGE } from './InlineWikilinkInput'
+import { translate } from '../lib/i18n'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import type { AiPanelController } from './useAiPanelController'
 import type { VaultEntry } from '../types'
 import { queueAiPrompt } from '../utils/aiPromptBridge'
+import { resetAiWorkspaceSessionStoreForTests, setAiWorkspaceSessionMessages } from '../lib/aiWorkspaceSessionStore'
 import type { NoteReference } from '../utils/ai-context'
 import { bindVaultConfigStore, getVaultConfig, resetVaultConfigStore } from '../utils/vaultConfigStore'
 
@@ -22,6 +23,7 @@ vi.mock('../lib/telemetry', () => ({
 let mockMessages: ReturnType<typeof import('../hooks/useCliAiAgent').useCliAiAgent>['messages'] = []
 let mockStatus: ReturnType<typeof import('../hooks/useCliAiAgent').useCliAiAgent>['status'] = 'idle'
 const mockSendMessage = vi.fn()
+let mockAdmitSend = true
 const mockStopMessage = vi.fn()
 const mockClearConversation = vi.fn()
 const mockAddLocalMarker = vi.fn()
@@ -33,7 +35,11 @@ vi.mock('../hooks/useCliAiAgent', () => ({
     return {
       messages: mockMessages,
       status: mockStatus,
-      sendMessage: mockSendMessage,
+      sendMessage: (...args: unknown[]) => {
+        mockSendMessage(...args.slice(0, 3))
+        if (mockAdmitSend) (args[3] as (() => void) | undefined)?.()
+        return Promise.resolve()
+      },
       stopMessage: mockStopMessage,
       clearConversation: mockClearConversation,
       addLocalMarker: mockAddLocalMarker,
@@ -123,6 +129,7 @@ function QueuedPromptTargetHarness({ onTargetChange }: { onTargetChange: (target
     handleNavigateWikilink: vi.fn(),
     handlePermissionModeChange: vi.fn(),
     handleNewChat: vi.fn(),
+    resetConversation: mockClearConversation,
   }
 
   return (
@@ -137,10 +144,14 @@ function QueuedPromptTargetHarness({ onTargetChange }: { onTargetChange: (target
 }
 
 describe('AiPanel', () => {
+  let originalMockHandlers: Record<string, (args?: unknown) => unknown> | undefined
+
   beforeEach(() => {
+    originalMockHandlers = window.__mockHandlers ? { ...window.__mockHandlers } : undefined
     mockMessages = []
     mockStatus = 'idle'
     mockSendMessage.mockReset()
+    mockAdmitSend = true
     mockStopMessage.mockReset()
     mockClearConversation.mockReset()
     mockAddLocalMarker.mockReset()
@@ -159,6 +170,12 @@ describe('AiPanel', () => {
       allNotes: null,
       ai_agent_permission_mode: 'safe',
     }, vi.fn())
+  })
+
+  afterEach(() => {
+    if (originalMockHandlers) {
+      window.__mockHandlers = originalMockHandlers
+    }
   })
 
   it('renders panel with the default CLI agent header', () => {
@@ -528,7 +545,7 @@ describe('AiPanel', () => {
     })
   })
 
-  it('surfaces an unsupported image paste notice without locking the composer', () => {
+  it('surfaces an unsupported non-image paste notice without locking the composer', () => {
     const onUnsupportedAiPaste = vi.fn()
     const entry = makeEntry({ title: 'My Note' })
 
@@ -545,12 +562,178 @@ describe('AiPanel', () => {
     fireEvent.paste(screen.getByTestId('agent-input'), {
       clipboardData: {
         getData: vi.fn(() => ''),
-        files: [new File(['image'], 'paste.png', { type: 'image/png' })],
-        items: [{ kind: 'file', type: 'image/png' }],
+        files: [new File(['pdf'], 'spec.pdf', { type: 'application/pdf' })],
+        items: [{ kind: 'file', type: 'application/pdf' }],
       },
     })
 
-    expect(onUnsupportedAiPaste).toHaveBeenCalledWith(UNSUPPORTED_INLINE_PASTE_MESSAGE)
-    expect(screen.getByTestId('agent-input').textContent).not.toContain('paste.png')
+    expect(onUnsupportedAiPaste).toHaveBeenCalledWith(translate('en', 'ai.panel.unsupportedPaste'))
+    expect(screen.getByTestId('agent-input').textContent).not.toContain('spec.pdf')
+  })
+
+  it('attaches pasted images, enables image-only sends, and cleans up removed or cleared images', async () => {
+    let stageSeq = 0
+    const deleteSpy = vi.fn(() => null)
+    window.__mockHandlers = {
+      ...window.__mockHandlers,
+      stage_ai_chat_image: (args?: unknown) => {
+        const { vaultPath, filename } = args as { vaultPath: string; filename: string }
+        return `${vaultPath}/.tolaria/tmp/${++stageSeq}-${filename}`
+      },
+      delete_ai_chat_images: deleteSpy,
+    }
+
+    const { rerender } = render(<AiPanel onClose={vi.fn()} vaultPath="/tmp/vault" />)
+    expect(screen.getByTestId('agent-attach-image')).toBeEnabled()
+    expect(screen.getByTestId('agent-send')).toBeDisabled()
+
+    const firstPng = new File(['png-1'], 'first.png', { type: 'image/png' })
+    const secondPng = new File(['png-2'], 'second.png', { type: 'image/png' })
+    fireEvent.paste(screen.getByTestId('agent-input'), {
+      clipboardData: {
+        getData: vi.fn(() => ''),
+        files: [firstPng, secondPng],
+        items: [
+          { kind: 'file', type: 'image/png', getAsFile: () => firstPng },
+          { kind: 'file', type: 'image/png', getAsFile: () => secondPng },
+        ],
+      },
+    })
+
+    await waitFor(() => {
+      expect(screen.getAllByTestId('composer-image-item')).toHaveLength(2)
+    })
+    expect(screen.getByTestId('agent-send')).toBeEnabled()
+
+    fireEvent.click(screen.getAllByTestId('composer-image-remove')[0])
+    await waitFor(() => {
+      expect(screen.getAllByTestId('composer-image-item')).toHaveLength(1)
+    })
+    await waitFor(() => {
+      expect(deleteSpy).toHaveBeenCalledWith({
+        vaultPath: '/tmp/vault',
+        paths: ['/tmp/vault/.tolaria/tmp/1-first.png'],
+      })
+    })
+
+    deleteSpy.mockClear()
+    fireEvent.click(screen.getByTestId('agent-send'))
+    expect(mockSendMessage).toHaveBeenCalledWith('', [], ['/tmp/vault/.tolaria/tmp/2-second.png'])
+    expect(screen.queryByTestId('composer-image-strip')).toBeNull()
+    expect(deleteSpy).not.toHaveBeenCalled()
+
+    mockMessages = [{
+      id: 'msg-sent',
+      userMessage: '',
+      images: ['/tmp/vault/.tolaria/tmp/2-second.png'],
+      actions: [],
+      response: 'Done',
+    }]
+    rerender(<AiPanel onClose={vi.fn()} vaultPath="/tmp/vault" />)
+    const thirdPng = new File(['png-3'], 'third.png', { type: 'image/png' })
+    fireEvent.paste(screen.getByTestId('agent-input'), {
+      clipboardData: {
+        getData: vi.fn(() => ''),
+        files: [thirdPng],
+        items: [{ kind: 'file', type: 'image/png', getAsFile: () => thirdPng }],
+      },
+    })
+    await waitFor(() => {
+      expect(screen.getAllByTestId('composer-image-item')).toHaveLength(1)
+    })
+
+    fireEvent.click(screen.getByTitle('New AI chat'))
+    await waitFor(() => {
+      expect(deleteSpy).toHaveBeenCalledWith({
+        vaultPath: '/tmp/vault',
+        paths: [
+          '/tmp/vault/.tolaria/tmp/2-second.png',
+          '/tmp/vault/.tolaria/tmp/3-third.png',
+        ],
+      })
+    })
+    expect(mockClearConversation).toHaveBeenCalledOnce()
+  })
+
+  it('keeps composer images and draft intact when the session rejects the image send', async () => {
+    mockAdmitSend = false
+    window.__mockHandlers = {
+      ...window.__mockHandlers,
+      stage_ai_chat_image: () => '/tmp/vault/.tolaria/tmp/1-blocked.png',
+    }
+    render(<AiPanel onClose={vi.fn()} vaultPath="/tmp/vault" />)
+
+    const png = new File(['png'], 'blocked.png', { type: 'image/png' })
+    fireEvent.paste(screen.getByTestId('agent-input'), {
+      clipboardData: {
+        getData: vi.fn(() => ''),
+        files: [png],
+        items: [{ kind: 'file', type: 'image/png', getAsFile: () => png }],
+      },
+    })
+
+    await waitFor(() => {
+      expect(screen.getAllByTestId('composer-image-item')).toHaveLength(1)
+    })
+
+    fireEvent.click(screen.getByTestId('agent-send'))
+    expect(mockSendMessage).toHaveBeenCalledWith('', [], ['/tmp/vault/.tolaria/tmp/1-blocked.png'])
+    expect(screen.getAllByTestId('composer-image-item')).toHaveLength(1)
+  })
+
+  describe('conversation reset releases images by ownership', () => {
+    const shared = '/tmp/vault/.tolaria/tmp/1-shared.png'
+    const sourceOnly = '/tmp/vault/.tolaria/tmp/2-source.png'
+    const draft = '/tmp/vault/.tolaria/tmp/3-draft.png'
+    const deleteSpy = vi.fn(() => null)
+
+    async function renderWithSentAndDraftImages() {
+      window.__mockHandlers = {
+        ...window.__mockHandlers,
+        stage_ai_chat_image: () => draft,
+        delete_ai_chat_images: deleteSpy,
+      }
+      mockMessages = [{ id: 'm1', userMessage: 'img', images: [shared, sourceOnly], actions: [], response: 'ok' }]
+      render(<AiPanel onClose={vi.fn()} vaultPath="/tmp/vault" />)
+      const png = new File(['png'], 'draft.png', { type: 'image/png' })
+      fireEvent.paste(screen.getByTestId('agent-input'), {
+        clipboardData: { getData: vi.fn(() => ''), files: [png], items: [{ kind: 'file', type: 'image/png', getAsFile: () => png }] },
+      })
+      await waitFor(() => { expect(screen.getAllByTestId('composer-image-item')).toHaveLength(1) })
+    }
+
+    beforeEach(() => {
+      deleteSpy.mockClear()
+      resetAiWorkspaceSessionStoreForTests()
+    })
+
+    afterEach(() => {
+      resetAiWorkspaceSessionStoreForTests()
+    })
+
+    it('keeps a sent image that a fork still owns when the source chat is reset', async () => {
+      setAiWorkspaceSessionMessages('chat-fork', [{ id: 'm1', userMessage: 'img', images: [shared], actions: [] }])
+      await renderWithSentAndDraftImages()
+
+      fireEvent.click(screen.getByTitle('New AI chat'))
+
+      await waitFor(() => {
+        expect(deleteSpy).toHaveBeenCalledWith({ vaultPath: '/tmp/vault', paths: [sourceOnly, draft] })
+      })
+      expect(deleteSpy).toHaveBeenCalledTimes(1)
+    })
+
+    it('releases sent and draft images and keeps the request text-only when a palette prompt resets the chat', async () => {
+      await renderWithSentAndDraftImages()
+
+      await act(async () => { queueAiPrompt('summarize', []) })
+
+      await waitFor(() => {
+        expect(deleteSpy).toHaveBeenCalledWith({ vaultPath: '/tmp/vault', paths: [shared, sourceOnly, draft] })
+      })
+      expect(mockClearConversation).toHaveBeenCalledOnce()
+      expect(mockSendMessage).toHaveBeenCalledWith('summarize', [])
+      expect(screen.queryByTestId('composer-image-strip')).toBeNull()
+    })
   })
 })

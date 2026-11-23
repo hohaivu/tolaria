@@ -10,10 +10,9 @@ import {
 } from '@testing-library/react'
 import { WikilinkChatInput } from './WikilinkChatInput'
 import { extractDroppedPathText } from './inlineWikilinkDropText'
-import {
-  UNSUPPORTED_INLINE_PASTE_MESSAGE,
-} from './InlineWikilinkInput'
 import { isInsertBeforeInput } from './inlineWikilinkBeforeInput'
+import { translate } from '../lib/i18n'
+import type { AttachImagesPayload } from '../lib/aiChatImages'
 import type { VaultEntry } from '../types'
 
 type NativeDropPayload = {
@@ -75,12 +74,14 @@ const entries: VaultEntry[] = [
 
 function Controlled({
   onSend,
+  onAttachImages,
   onUnsupportedPaste,
   disabled = false,
   placeholder,
   onDraftChange,
 }: {
   onSend?: (text: string, refs: Array<{ title: string; path: string; type: string | null }>) => void
+  onAttachImages?: (payload: AttachImagesPayload) => void
   onUnsupportedPaste?: (message: string) => void
   disabled?: boolean
   placeholder?: string
@@ -98,6 +99,7 @@ function Controlled({
       value={value}
       onChange={handleChange}
       onSend={onSend ?? vi.fn()}
+      onAttachImages={onAttachImages}
       onUnsupportedPaste={onUnsupportedPaste}
       disabled={disabled}
       placeholder={placeholder}
@@ -209,6 +211,12 @@ function emitNativePathDrop(paths: string[], position = { x: 20, y: 20 }) {
       position,
     },
   })
+}
+
+function emitNativeDragEnter(position = { x: 20, y: 20 }) {
+  const handler = nativeDropState.handlers['native-drag-drop']
+  if (!handler) throw new Error('No native drop handler registered')
+  handler({ payload: { type: 'enter', paths: [], position } })
 }
 
 async function waitForNativePathDropListener() {
@@ -736,7 +744,7 @@ describe('WikilinkChatInput', () => {
 
     fireEvent.paste(editor, { clipboardData })
 
-    expect(onUnsupportedPaste).toHaveBeenCalledWith(UNSUPPORTED_INLINE_PASTE_MESSAGE)
+    expect(onUnsupportedPaste).toHaveBeenCalledWith(translate('en', 'ai.panel.unsupportedPaste'))
 
     updateEditorText('still works')
     expect(editor.textContent).toContain('still works')
@@ -853,12 +861,132 @@ describe('WikilinkChatInput', () => {
 
     fireEvent.input(editor)
 
-    expect(onUnsupportedPaste).toHaveBeenCalledWith(UNSUPPORTED_INLINE_PASTE_MESSAGE)
+    expect(onUnsupportedPaste).toHaveBeenCalledWith(translate('en', 'ai.panel.unsupportedPaste'))
     await waitFor(() => {
       expect(screen.getByTestId('agent-input').querySelector('img')).toBeNull()
     })
 
     updateEditorText('still works')
     expect(screen.getByTestId('agent-input').textContent).toContain('still works')
+  })
+
+  it('routes pasted images to onAttachImages while still rejecting non-image files', () => {
+    const onAttachImages = vi.fn()
+    const onUnsupportedPaste = vi.fn()
+    render(<Controlled onAttachImages={onAttachImages} onUnsupportedPaste={onUnsupportedPaste} />)
+
+    const editor = screen.getByTestId('agent-input')
+    const pngFile = new File(['png'], 'paste.png', { type: 'image/png' })
+    fireEvent.paste(editor, {
+      clipboardData: {
+        getData: vi.fn(() => ''),
+        files: [pngFile],
+        items: [{ kind: 'file', type: 'image/png', getAsFile: () => pngFile }],
+      },
+    })
+
+    expect(onAttachImages).toHaveBeenCalledWith({ files: [pngFile] })
+    expect(onUnsupportedPaste).not.toHaveBeenCalled()
+
+    const pdfFile = new File(['pdf'], 'spec.pdf', { type: 'application/pdf' })
+    fireEvent.paste(editor, {
+      clipboardData: {
+        getData: vi.fn(() => ''),
+        files: [pdfFile],
+        items: [{ kind: 'file', type: 'application/pdf', getAsFile: () => pdfFile }],
+      },
+    })
+
+    expect(onAttachImages).toHaveBeenCalledTimes(1)
+    expect(onUnsupportedPaste).toHaveBeenCalledWith(translate('en', 'ai.panel.unsupportedPaste'))
+  })
+
+  it('deduplicates DOM and Tauri native drops of the same image while keeping non-image path drops', async () => {
+    nativeDropState.tauriMode = true
+    const onAttachImages = vi.fn()
+    const onDraftChange = vi.fn()
+    render(<Controlled onAttachImages={onAttachImages} onDraftChange={onDraftChange} />)
+
+    const editor = screen.getByTestId('agent-input') as HTMLDivElement
+    mockElementRect(editor)
+    await waitForNativePathDropListener()
+
+    const pngFile = new File(['png'], 'diagram.png', { type: 'image/png' })
+    fireEvent.drop(editor, {
+      dataTransfer: {
+        getData: vi.fn(() => ''),
+        files: [pngFile],
+        items: [{ kind: 'file', type: 'image/png' }],
+      },
+    })
+
+    act(() => {
+      emitNativePathDrop(['/Users/test/diagram.png'])
+    })
+
+    expect(onAttachImages).toHaveBeenCalledTimes(1)
+    expect(onAttachImages).toHaveBeenCalledWith({ files: [pngFile] })
+    expect(onDraftChange).not.toHaveBeenCalled()
+
+    act(() => {
+      emitNativePathDrop(['/Users/test/Projects'])
+    })
+
+    await waitFor(() => {
+      expect(onDraftChange).toHaveBeenCalledWith('/Users/test/Projects')
+    })
+  })
+  it('stages the image and rejects the PDF in one mixed DOM-only drop', () => {
+    const onAttachImages = vi.fn()
+    const onUnsupportedPaste = vi.fn()
+    render(<Controlled onAttachImages={onAttachImages} onUnsupportedPaste={onUnsupportedPaste} />)
+
+    const editor = screen.getByTestId('agent-input') as HTMLDivElement
+    const pngFile = new File(['png'], 'diagram.png', { type: 'image/png' })
+    const pdfFile = new File(['pdf'], 'spec.pdf', { type: 'application/pdf' })
+    fireEvent.drop(editor, {
+      dataTransfer: {
+        getData: vi.fn(() => ''),
+        files: [pngFile, pdfFile],
+        items: [
+          { kind: 'file', type: 'image/png' },
+          { kind: 'file', type: 'application/pdf' },
+        ],
+      },
+    })
+
+    expect(onAttachImages).toHaveBeenCalledWith({ files: [pngFile] })
+    expect(onUnsupportedPaste).toHaveBeenCalledWith(translate('en', 'ai.panel.unsupportedPaste'))
+  })
+
+  it('treats a same-named image dropped in a new gesture as a new drop, in either channel order', async () => {
+    nativeDropState.tauriMode = true
+    const onAttachImages = vi.fn()
+    render(<Controlled onAttachImages={onAttachImages} />)
+
+    const editor = screen.getByTestId('agent-input') as HTMLDivElement
+    mockElementRect(editor)
+    await waitForNativePathDropListener()
+
+    const pngFile = new File(['png'], 'diagram.png', { type: 'image/png' })
+    const domDrop = () => fireEvent.drop(editor, {
+      dataTransfer: { getData: vi.fn(() => ''), files: [pngFile], items: [{ kind: 'file', type: 'image/png' }] },
+    })
+
+    domDrop()
+    act(() => { emitNativeDragEnter() })
+    act(() => { emitNativePathDrop(['/other/diagram.png']) })
+    expect(onAttachImages).toHaveBeenCalledTimes(2)
+
+    // One dual-channel gesture, native first: the DOM copy is still deduplicated.
+    fireEvent.dragEnter(editor)
+    act(() => { emitNativePathDrop(['/third/diagram.png']) })
+    domDrop()
+    expect(onAttachImages).toHaveBeenCalledTimes(3)
+
+    // A later DOM-only drop after a new drag entry is not swallowed by the previous native drop.
+    fireEvent.dragEnter(editor)
+    domDrop()
+    expect(onAttachImages).toHaveBeenCalledTimes(4)
   })
 })

@@ -17,6 +17,7 @@ export interface AiAgentDefinition {
   label: string
   shortLabel: string
   installUrl: string
+  readsImagePaths: boolean
 }
 
 export const DEFAULT_AI_AGENT: AiAgentId = 'claude_code'
@@ -27,48 +28,56 @@ export const AI_AGENT_DEFINITIONS: readonly AiAgentDefinition[] = [
     label: 'Claude Code',
     shortLabel: 'Claude',
     installUrl: 'https://docs.anthropic.com/en/docs/claude-code',
+    readsImagePaths: true,
   },
   {
     id: 'codex',
     label: 'Codex',
     shortLabel: 'Codex',
     installUrl: 'https://developers.openai.com/codex/cli',
+    readsImagePaths: true,
   },
   {
     id: 'copilot',
     label: 'GitHub Copilot',
     shortLabel: 'Copilot',
     installUrl: 'https://docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/install-copilot-cli',
+    readsImagePaths: true,
   },
   {
     id: 'opencode',
     label: 'OpenCode',
     shortLabel: 'OpenCode',
     installUrl: 'https://opencode.ai/docs/',
+    readsImagePaths: true,
   },
   {
     id: 'pi',
     label: 'Pi',
     shortLabel: 'Pi',
     installUrl: 'https://pi.dev',
+    readsImagePaths: true,
   },
   {
     id: 'antigravity',
     label: 'Antigravity CLI',
     shortLabel: 'Antigravity',
     installUrl: 'https://antigravity.google/docs/cli/install',
+    readsImagePaths: true,
   },
   {
     id: 'kiro',
     label: 'Kiro',
     shortLabel: 'Kiro',
     installUrl: 'https://kiro.dev/docs/cli',
+    readsImagePaths: true,
   },
   {
     id: 'hermes',
     label: 'Hermes Agent',
     shortLabel: 'Hermes',
     installUrl: 'https://hermes-agent.nousresearch.com/docs/getting-started/quickstart',
+    readsImagePaths: true,
   },
 ] as const
 

@@ -198,10 +198,11 @@ export function AiPanelView(options: AiPanelViewProps) {
         handleNavigateWikilink,
         handlePermissionModeChange,
         handleNewChat,
+        resetConversation,
       } = controller
 
       useAiPanelPromptQueue({
-        agent,
+        agent: { clearConversation: resetConversation, sendMessage: agent.sendMessage },
         currentTargetId: targetId,
         input,
         isActive,
@@ -219,11 +220,9 @@ export function AiPanelView(options: AiPanelViewProps) {
       })
       const handleComposerSend = useCallback(
         (text: string, references: Parameters<typeof handleSend>[1]) => {
-        if (!text.trim() || isActive) return
-        onSendPrompt?.(text)
-        handleSend(text, references)
+          handleSend(text, references, () => onSendPrompt?.(text))
         },
-        [handleSend, isActive, onSendPrompt],
+        [handleSend, onSendPrompt],
       )
 
       return (
@@ -263,6 +262,7 @@ export function AiPanelView(options: AiPanelViewProps) {
             inputRef={inputRef}
             isActive={isActive}
             controls={composerControls}
+            composerImages={controller.composerImages}
             onChange={setInput}
             onSend={handleComposerSend}
             onStop={handleStop}
@@ -312,6 +312,7 @@ export function AiPanelView(options: AiPanelViewProps) {
     onOpenNote,
     onFileCreated,
     onFileModified,
+    onUnsupportedAiPaste,
     onVaultChanged,
   })
 

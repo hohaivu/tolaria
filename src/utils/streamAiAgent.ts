@@ -34,6 +34,7 @@ export interface StreamAiAgentRequest {
   vaultPath: string
   vaultPaths?: string[]
   permissionMode?: AiAgentPermissionMode
+  attachments?: string[]
   callbacks: AgentStreamCallbacks
   signal?: AbortSignal
 }
@@ -129,6 +130,7 @@ function nativeAgentStreamRequest(request: StreamAiAgentRequest, eventName: stri
     vault_paths: request.vaultPaths && request.vaultPaths.length > 0 ? request.vaultPaths : null,
     permission_mode: normalizeAiAgentPermissionMode(request.permissionMode),
     event_name: eventName,
+    attachments: request.attachments ?? [],
   }
 }
 

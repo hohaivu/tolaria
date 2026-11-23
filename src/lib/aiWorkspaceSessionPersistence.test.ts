@@ -322,4 +322,35 @@ describe("AI workspace transcript persistence", () => {
 			firstWindow.aiWorkspaceSessionSnapshot("chat-1").messages[0].response,
 		).toBe("second");
 	});
+
+	it("round-trips staged image paths without storing base64 or bytes", async () => {
+		const store = await import("./aiWorkspaceSessionStore");
+		const imagePath = "/vault/.tolaria/tmp/1700000000000-diagram.png";
+		store.setAiWorkspaceSessionMessages("chat-images", [
+			{
+				id: "msg-img",
+				userMessage: "",
+				images: [imagePath],
+				actions: [],
+				response: "A diagram.",
+			},
+		]);
+
+		window.dispatchEvent(new Event("pagehide"));
+		const serialized = values.get(STORAGE_KEY) ?? "";
+		expect(serialized).toContain(imagePath);
+		expect(serialized).not.toContain("data:image");
+
+		vi.resetModules();
+		const reloaded = await import("./aiWorkspaceSessionStore");
+		expect(reloaded.aiWorkspaceSessionSnapshot("chat-images").messages).toEqual([
+			{
+				id: "msg-img",
+				userMessage: "",
+				images: [imagePath],
+				actions: [],
+				response: "A diagram.",
+			},
+		]);
+	});
 });

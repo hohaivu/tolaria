@@ -7,9 +7,11 @@ import {
   portableAttachmentPathFromCurrentVaultPath,
   resolveVaultAttachmentPath,
   resolveWebAttachmentUrl,
+  safeAttachmentAssetUrlFromPath,
   vaultAttachmentAssetUrl,
   webAttachmentPath,
 } from './vaultAttachments'
+import { convertFileSrc } from '@tauri-apps/api/core'
 
 vi.mock('@tauri-apps/api/core', () => ({
   convertFileSrc: vi.fn((path: string) => `asset://localhost/${encodeURIComponent(path)}`),
@@ -140,6 +142,18 @@ describe('vault attachment URL/path conversions', () => {
     expect(isTauriAssetUrl({ url: 'http://asset.localhost/%2Fvault%2Fattachments%2Fshot.png' })).toBe(true)
     expect(isTauriAssetUrl({ url: 'asset:///vault/attachments/shot.png' })).toBe(true)
     expect(isTauriAssetUrl({ url: 'https://example.com/shot.png' })).toBe(false)
+  })
+
+  it('returns an asset URL or falls back to the raw path when convertFileSrc throws', () => {
+    expect(safeAttachmentAssetUrlFromPath({ path: '/vault/.tolaria/tmp/1-a.png' })).toBe(
+      assetUrl('/vault/.tolaria/tmp/1-a.png'),
+    )
+    vi.mocked(convertFileSrc).mockImplementationOnce(() => {
+      throw new Error('no internals')
+    })
+    expect(safeAttachmentAssetUrlFromPath({ path: '/vault/.tolaria/tmp/1-a.png' })).toBe(
+      '/vault/.tolaria/tmp/1-a.png',
+    )
   })
 })
 

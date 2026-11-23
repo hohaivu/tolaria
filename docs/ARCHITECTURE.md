@@ -504,6 +504,8 @@ CLI-agent system prompts also include a local Tolaria docs orientation when the 
 
 Renderer-facing CLI setup errors can carry a `tolaria:i18n-error:` JSON marker with a translation key and primitive interpolation values. `localizedStreamError.ts` resolves that marker through the active app locale before the AI panel appends stream failure text, so native adapters such as Pi can keep CLI diagnostics in Rust while user-facing setup copy remains in the JSON catalogs.
 
+Image attachments (see `specs/ai-chat-images.md`) add an optional `attachments` list to the `stream_ai_agent` request. `ai_chat_images.rs` stages each image under `<vault>/.tolaria/tmp/`. It adds `.tolaria/` to `.git/info/exclude` only when `.git` is a real directory and `.git/info` and `exclude` are not links. `prepare_attachments()` appends an "Attached images" block with the paths to the message before any adapter starts, so all eight agents read the same prompt text. The frontend vision gate blocks sends to API-model targets and agents with `readsImagePaths: false`, so those sends never carry attachments.
+
 #### Agent Event Flow
 
 ```mermaid
@@ -1072,6 +1074,10 @@ The vault backend (`src-tauri/src/vault/`) is split into focused submodules:
 | `get_agent_docs_path` | Resolve the bundled local Tolaria docs folder used in AI-agent system prompts |
 | `stream_ai_agent` | Stream Claude Code, Codex, GitHub Copilot, OpenCode, Pi, Antigravity, Kiro, or Hermes Agent through the normalized agent event layer |
 | `abort_ai_agent_stream` | Stop an active app-managed CLI agent stream by its validated request-scoped event name |
+| `stage_ai_chat_image` | Write a base64 image from the composer into `<vault>/.tolaria/tmp/` and return its path |
+| `stage_ai_chat_image_from_path` | Copy a picked or dropped image file into `<vault>/.tolaria/tmp/` and return its path |
+| `delete_ai_chat_images` | Delete staged AI chat image files that are direct children of the vault tmp folder |
+| `clear_ai_chat_images` | Empty the vault AI chat image tmp folder (main window, once per vault per app run) |
 | `register_mcp_tools` | Register vault-neutral MCP in Claude/Antigravity/Cursor/OpenCode/generic config |
 | `remove_mcp_tools` | Remove Tolaria's MCP entry from Claude/Antigravity/Cursor/OpenCode/generic config |
 | `check_mcp_status` | Check whether Tolaria's durable MCP entry is registered in Claude/Antigravity/Cursor/OpenCode/generic config |

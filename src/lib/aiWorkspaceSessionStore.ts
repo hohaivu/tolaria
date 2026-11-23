@@ -17,6 +17,8 @@ const locallyUpdatedSessionIds = new Set<SessionId>();
 export interface AiWorkspaceSessionSnapshot {
 	messages: AiAgentMessage[];
 	status: AgentStatus;
+	/** Closed (not archived) conversation: it keeps its transcript but no longer owns staged image files. */
+	released?: boolean;
 }
 
 interface StoredAiWorkspaceSessionSnapshot extends AiWorkspaceSessionSnapshot {
@@ -208,6 +210,7 @@ function normalizeStoredSessions(
 						resetRunningStatus,
 					),
 					status: normalizeStoredStatus(session.status, resetRunningStatus),
+					...(session.released === true ? { released: true } : {}),
 					...(typeof session.revision === "string"
 						? { revision: session.revision }
 						: {}),
@@ -360,9 +363,17 @@ export function aiWorkspaceSessionSnapshot(
 		getSession(sessionStore.getSnapshot(), sessionId) ?? EMPTY_SESSION;
 	const cached = publicSessionSnapshots.get(sessionId);
 	if (cached?.source === source) return cached.snapshot;
-	const snapshot = { messages: source.messages, status: source.status };
+	const snapshot: AiWorkspaceSessionSnapshot = {
+		messages: source.messages,
+		status: source.status,
+		...(source.released ? { released: true } : {}),
+	};
 	publicSessionSnapshots.set(sessionId, { source, snapshot });
 	return snapshot;
+}
+
+export function aiWorkspaceSessionIds(): SessionId[] {
+	return Object.keys(sessionStore.getSnapshot());
 }
 
 export function subscribeAiWorkspaceSession(
@@ -395,6 +406,19 @@ export function setAiWorkspaceSessionStatus(
 			...current,
 			status,
 		};
+	});
+}
+
+export function setAiWorkspaceSessionReleased(
+	sessionId: SessionId,
+	released: boolean,
+): void {
+	if (!released && !aiWorkspaceSessionSnapshot(sessionId).released) return;
+	publishSessionUpdate(sessionId, (current) => {
+		const next = { ...current };
+		if (released) next.released = true;
+		else delete next.released;
+		return next;
 	});
 }
 

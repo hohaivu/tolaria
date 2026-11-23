@@ -1,3 +1,4 @@
+import { isImageAttachmentCandidateFile, isImageAttachmentCandidatePath } from '../lib/aiChatImages'
 import type { NoteReference } from '../utils/ai-context'
 import type { InlineSelectionRange } from './inlineWikilinkDom'
 import { replaceInlineSelection } from './inlineWikilinkEdits'
@@ -7,6 +8,47 @@ export function hasUnsupportedClipboardPayload(clipboardData: DataTransfer) {
   if (clipboardData.files.length > 0) return true
 
   return Array.from(clipboardData.items).some((item) => item.kind === 'file' || item.type.startsWith('image/'))
+}
+
+function extractClipboardFiles(clipboardData: DataTransfer): File[] {
+  const files = Array.from(clipboardData.files ?? [])
+  if (files.length > 0) return files
+
+  const itemFiles: File[] = []
+  for (const item of Array.from(clipboardData.items ?? [])) {
+    if (item.kind !== 'file') continue
+    const file = typeof item.getAsFile === 'function' ? item.getAsFile() : null
+    if (file) itemFiles.push(file)
+  }
+  return itemFiles
+}
+
+export function partitionDroppedImagePaths(paths: string[]): { imagePaths: string[]; textPaths: string[] } {
+  const imagePaths: string[] = []
+  const textPaths: string[] = []
+  for (const path of paths) {
+    if (isImageAttachmentCandidatePath(path)) imagePaths.push(path)
+    else textPaths.push(path)
+  }
+  return { imagePaths, textPaths }
+}
+
+export function extractDroppedImageFiles(dataTransfer: DataTransfer): File[] {
+  return extractClipboardFiles(dataTransfer).filter(isImageAttachmentCandidateFile)
+}
+
+export function hasRejectedDroppedFiles(dataTransfer: DataTransfer): boolean {
+  return extractClipboardFiles(dataTransfer).some((file) => !isImageAttachmentCandidateFile(file))
+}
+
+export function extractPastedImageFiles(clipboardData: DataTransfer): File[] {
+  const pastedFiles = extractClipboardFiles(clipboardData)
+  const hasImageItem = Array.from(clipboardData.items ?? []).some(
+    (item) => item.type.startsWith('image/'),
+  )
+  return pastedFiles.some(isImageAttachmentCandidateFile) || (hasImageItem && pastedFiles.length > 0)
+    ? pastedFiles
+    : []
 }
 
 export function containsUnsupportedInlineContent(editor: HTMLDivElement) {

@@ -187,6 +187,14 @@ export function attachmentAssetUrlFromPath({ path }: PathRequest): string {
   return convertFileSrc(path)
 }
 
+export function safeAttachmentAssetUrlFromPath({ path }: PathRequest): string {
+  try {
+    return attachmentAssetUrlFromPath({ path })
+  } catch {
+    return path
+  }
+}
+
 export function vaultAttachmentAssetUrl({
   attachmentPath,
   vaultPath,

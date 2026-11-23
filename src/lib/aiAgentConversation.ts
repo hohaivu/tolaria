@@ -18,6 +18,7 @@ import type { AppLocale } from './i18n'
 export interface AiAgentMessage {
   userMessage: string
   references?: NoteReference[]
+  images?: string[]
   localMarker?: string
   reasoning?: string
   reasoningDone?: boolean
@@ -40,11 +41,13 @@ export interface AgentExecutionContext {
   agentDocsPath?: string
   permissionMode: AiAgentPermissionMode
   systemPromptOverride?: string
+  onToast?: (message: string) => void
 }
 
 export interface PendingUserPrompt {
   text: string
   references?: NoteReference[]
+  images?: string[]
 }
 
 function toChatHistory(messages: AiAgentMessage[]): ChatMessage[] {
@@ -77,6 +80,10 @@ export function createMissingAgentResponse(agent: AiAgentId): string {
   return `${definition.label} is not available on this machine. Install it or switch the default AI agent in Settings.`
 }
 
+function optionalMessageImages(prompt: PendingUserPrompt): Pick<AiAgentMessage, 'images'> {
+  return prompt.images && prompt.images.length > 0 ? { images: prompt.images } : {}
+}
+
 export function appendLocalResponse(
   setMessages: Dispatch<SetStateAction<AiAgentMessage[]>>,
   prompt: PendingUserPrompt,
@@ -87,6 +94,7 @@ export function appendLocalResponse(
     {
       userMessage: prompt.text,
       references: prompt.references,
+      ...optionalMessageImages(prompt),
       actions: [],
       response,
       id: nextMessageId(),
@@ -104,6 +112,7 @@ export function appendStreamingMessage(
     {
       userMessage: prompt.text,
       references: prompt.references,
+      ...optionalMessageImages(prompt),
       actions: [],
       isStreaming: true,
       id: messageId,

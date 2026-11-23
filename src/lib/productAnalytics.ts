@@ -10,7 +10,7 @@ import type { ThemeMode } from './themeMode'
 
 type TrackedPreviewKind = FilePreviewKind | 'unsupported'
 type FilePreviewAction = 'copy_deep_link' | 'copy_path' | 'open_external' | 'reveal'
-type AgentBlockedReason = 'agent_unavailable' | 'missing_vault'
+type AgentBlockedReason = 'agent_unavailable' | 'missing_vault' | 'images_unsupported'
 type AiWorkspaceMode = 'docked' | 'side' | 'window'
 type AiWorkspaceTitleSource = 'generated' | 'manual'
 type NotePdfExportFailureReason = 'export_unavailable' | 'export_error'
@@ -229,6 +229,7 @@ export function trackAiAgentMessageSent(params: {
   hasContext: boolean
   referenceCount: number
   historyMessageCount: number
+  imageCount?: number
 }): void {
   trackEvent('ai_agent_message_sent', {
     agent: params.agent,
@@ -236,6 +237,7 @@ export function trackAiAgentMessageSent(params: {
     has_context: numericFlag(params.hasContext),
     reference_count: params.referenceCount,
     history_message_count: params.historyMessageCount,
+    image_count: params.imageCount ?? 0,
   })
 }
 

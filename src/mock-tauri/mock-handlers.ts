@@ -624,6 +624,29 @@ export const mockHandlers = {
     const filename = new URL(args.url).pathname.split('/').pop() || 'remote-image.png'
     return `${vault}/attachments/${Date.now()}-${filename}`
   },
+  stage_ai_chat_image: (args: {
+    vaultPath?: string
+    vault_path?: string
+    filename: string
+    dataBase64?: string
+    data_base64?: string
+  }) => {
+    const vault = args.vaultPath ?? args.vault_path ?? '/vault'
+    return `${vault}/.tolaria/tmp/${Date.now()}-${args.filename}`
+  },
+  stage_ai_chat_image_from_path: (args: {
+    vaultPath?: string
+    vault_path?: string
+    sourcePath?: string
+    source_path?: string
+  }) => {
+    const vault = args.vaultPath ?? args.vault_path ?? '/vault'
+    const source = args.sourcePath ?? args.source_path ?? 'image.png'
+    const filename = source.split('/').pop() || 'image.png'
+    return `${vault}/.tolaria/tmp/${Date.now()}-${filename}`
+  },
+  delete_ai_chat_images: () => null,
+  clear_ai_chat_images: () => null,
   get_settings: () => ({ ...mockSettings }),
   save_settings: (args: { settings: Settings }) => {
     const s = args.settings

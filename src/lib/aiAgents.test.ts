@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  AI_AGENT_DEFINITIONS,
   getNextAiAgentId,
   normalizeAiAgentsStatus,
   normalizeStoredAiAgent,
@@ -64,5 +65,12 @@ describe('aiAgents helpers', () => {
     expect(getNextAiAgentId('antigravity')).toBe('kiro')
     expect(getNextAiAgentId('kiro')).toBe('hermes')
     expect(getNextAiAgentId('hermes')).toBe('claude_code')
+  })
+
+  it('marks every verified CLI agent definition as supporting image paths', () => {
+    expect(AI_AGENT_DEFINITIONS).toHaveLength(8)
+    for (const definition of AI_AGENT_DEFINITIONS) {
+      expect(definition.readsImagePaths).toBe(true)
+    }
   })
 })

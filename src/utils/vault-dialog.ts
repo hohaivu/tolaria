@@ -44,38 +44,31 @@ export function formatFolderPickerActionError(
   return message ? `${action}: ${message}` : action
 }
 
-function normalizePickedFolderPath(selected: string | string[] | null): string | null {
-  const selectedPath = Array.isArray(selected)
-    ? (typeof selected[0] === 'string' ? selected[0] : null)
-    : selected
-
-  if (typeof selectedPath !== 'string') {
-    return null
-  }
-
-  if (!selectedPath.startsWith('file://')) {
-    return selectedPath
-  }
+// Native paths are kept byte-for-byte (a folder name may end in a space); only file URLs are decoded.
+function normalizeDialogPath(value: string): string | null {
+  if (!value) return null
+  if (!value.startsWith('file://')) return value
 
   try {
-    const parsed = new URL(selectedPath)
-    if (parsed.protocol !== 'file:') {
-      return selectedPath
-    }
+    const parsed = new URL(value)
+    if (parsed.protocol !== 'file:') return value
 
     const decodedPath = decodeURIComponent(parsed.pathname)
-    if (parsed.hostname) {
-      return `//${parsed.hostname}${decodedPath}`
-    }
-
-    if (/^\/[A-Za-z]:/.test(decodedPath)) {
-      return decodedPath.slice(1)
-    }
-
+    if (parsed.hostname) return `//${parsed.hostname}${decodedPath}`
+    if (/^\/[A-Za-z]:/.test(decodedPath)) return decodedPath.slice(1)
     return decodedPath
   } catch {
-    return selectedPath
+    return value
   }
+}
+
+export function normalizeDialogPaths(selected: string | string[] | null): string[] {
+  if (!selected) return []
+  const items = Array.isArray(selected) ? selected : [selected]
+  return items
+    .filter((item): item is string => typeof item === 'string')
+    .map(normalizeDialogPath)
+    .filter((item): item is string => item !== null)
 }
 
 let folderPickerRequestInFlight = false
@@ -92,7 +85,7 @@ async function pickNativeFolder(title?: string): Promise<string | null> {
       multiple: false,
       title: title ?? 'Select folder',
     })
-    return normalizePickedFolderPath(selected)
+    return normalizeDialogPaths(selected)[0] ?? null
   } catch (error) {
     if (isUnavailableNativeFolderPicker(error)) {
       markRestartRequiredAfterUpdate()
@@ -114,7 +107,7 @@ export const pickFolder = async (title?: string): Promise<string | null> => {
     if (isTauri()) {
       return await pickNativeFolder(title)
     }
-    return normalizePickedFolderPath(prompt(title ?? 'Enter folder path:'))
+    return normalizeDialogPaths(prompt(title ?? 'Enter folder path:'))[0] ?? null
   } finally {
     folderPickerRequestInFlight = false
   }

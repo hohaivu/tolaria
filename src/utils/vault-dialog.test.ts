@@ -18,7 +18,7 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({
   open: (...args: unknown[]) => openMock(...args),
 }))
 
-import { pickFolder } from './vault-dialog'
+import { normalizeDialogPaths, pickFolder } from './vault-dialog'
 import { isTauri } from '../mock-tauri'
 import {
   isRestartRequiredAfterUpdate,
@@ -57,6 +57,14 @@ describe('pickFolder', () => {
 
     await pickFolder()
     expect(window.prompt).toHaveBeenCalledWith('Enter folder path:')
+  })
+
+  it('returns a native path byte-for-byte, including a trailing space', async () => {
+    vi.mocked(isTauri).mockReturnValue(true)
+    openMock.mockResolvedValue('/Users/test/Vault ')
+
+    expect(await pickFolder('Select vault')).toBe('/Users/test/Vault ')
+    expect(normalizeDialogPaths(['/Users/test/Vault '])).toEqual(['/Users/test/Vault '])
   })
 
   it('normalizes file URLs returned by the browser fallback prompt', async () => {
@@ -127,5 +135,11 @@ describe('pickFolder', () => {
     const result = await pickFolder('Select vault')
 
     expect(result).toBe('/Users/test/My Vault')
+  })
+
+  it('normalizes single, multi-select, file://, and null dialog selections', () => {
+    expect(normalizeDialogPaths('file:///Users/test/My%20Shot.png')).toEqual(['/Users/test/My Shot.png'])
+    expect(normalizeDialogPaths(['/a.png', 'file:///C:/dir/b.webp'])).toEqual(['/a.png', 'C:/dir/b.webp'])
+    expect(normalizeDialogPaths(null)).toEqual([])
   })
 })

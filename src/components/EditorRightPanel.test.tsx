@@ -21,7 +21,8 @@ vi.mock('../hooks/useCliAiAgent', async () => {
       return {
         messages,
         status: 'idle',
-        sendMessage: (text: string) => {
+        sendMessage: (text: string, _references?: unknown, _images?: unknown, onAdmitted?: () => void) => {
+          onAdmitted?.()
           setMessages([{
             id: 'mock-session-message',
             userMessage: text,

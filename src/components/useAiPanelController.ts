@@ -1,5 +1,7 @@
 import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
 import type { AiAgentId, AiAgentReadiness } from '../lib/aiAgents'
+import { collectMessageImages, releaseUnownedImages } from '../lib/aiChatImages'
+import { aiWorkspaceSessionIds } from '../lib/aiWorkspaceSessionStore'
 import type { AiTarget } from '../lib/aiTargets'
 import type { AppLocale } from '../lib/i18n'
 import { trackAiAgentPermissionModeChanged } from '../lib/productAnalytics'
@@ -12,6 +14,7 @@ import { useCliAiAgent, type AgentFileCallbacks } from '../hooks/useCliAiAgent'
 import type { VaultEntry } from '../types'
 import { getVaultConfig, subscribeVaultConfig, updateVaultConfigField } from '../utils/vaultConfigStore'
 import type { NoteListItem, NoteReference } from '../utils/ai-context'
+import { useAiComposerImages, type AiPanelComposerImagesController } from './useAiComposerImages'
 import { useAiPanelContextSnapshot } from './useAiPanelContextSnapshot'
 
 interface UseAiPanelControllerArgs {
@@ -32,23 +35,27 @@ interface UseAiPanelControllerArgs {
   onOpenNote?: (path: string) => void
   onFileCreated?: (relativePath: string) => void
   onFileModified?: (relativePath: string) => void
+  onUnsupportedAiPaste?: (message: string) => void
   onVaultChanged?: () => void
   sessionId?: string
 }
 
 export interface AiPanelController {
   agent: ReturnType<typeof useCliAiAgent>
+  composerImages?: AiPanelComposerImagesController
   input: string
   setInput: React.Dispatch<React.SetStateAction<string>>
   linkedEntries: ReturnType<typeof useAiPanelContextSnapshot>['linkedEntries']
   hasContext: boolean
   isActive: boolean
   permissionMode: AiAgentPermissionMode
-  handleSend: (text: string, references: NoteReference[]) => void
+  handleSend: (text: string, references: NoteReference[], onSubmitted?: () => void) => void
   handleStop: () => void
   handleNavigateWikilink: (target: string) => void
   handlePermissionModeChange: (mode: AiAgentPermissionMode) => void
   handleNewChat: () => void
+  /** Clears the transcript and releases its images and draft; keeps the input text. */
+  resetConversation: () => void
 }
 
 function resolveAgentReady(readiness: AiAgentReadiness | undefined, ready: boolean): boolean {
@@ -114,11 +121,12 @@ function usePanelAgent(
   | 'model'
   | 'onFileCreated'
   | 'onFileModified'
+  | 'onUnsupportedAiPaste'
   | 'onVaultChanged'
   | 'sessionId'
   > & { contextPrompt?: string },
 ) {
-  const { vaultPath, vaultPaths, contextPrompt, defaultAiAgent, defaultAiTarget, defaultAiAgentReady, defaultAiAgentReadiness, locale, model, onFileCreated, onFileModified, onVaultChanged, sessionId } = options
+  const { vaultPath, vaultPaths, contextPrompt, defaultAiAgent, defaultAiTarget, defaultAiAgentReady, defaultAiAgentReadiness, locale, model, onFileCreated, onFileModified, onUnsupportedAiPaste, onVaultChanged, sessionId } = options
   const fileCallbacks = useAgentFileCallbacks({
     onFileCreated,
     onFileModified,
@@ -133,45 +141,66 @@ function usePanelAgent(
     agentReady: resolveAgentReady(defaultAiAgentReadiness, defaultAiAgentReady),
     permissionMode,
     sessionId,
+    onToast: onUnsupportedAiPaste,
   })
   return { agent, permissionMode }
 }
 
 function useAiPanelActions({
   agent,
+  composerImages,
   isActive,
   onOpenNote,
   setInput,
+  vaultPath,
 }: {
   agent: ReturnType<typeof usePanelAgent>['agent']
+  composerImages: AiPanelComposerImagesController
   isActive: boolean
   onOpenNote: UseAiPanelControllerArgs['onOpenNote']
   setInput: (value: string) => void
+  vaultPath: string
 }) {
   const handleSend = useCallback(
-    (text: string, references: NoteReference[]) => {
-      if (!text.trim() || isActive) return
-      agent.sendMessage(text, references)
-      setInput('')
+    (text: string, references: NoteReference[], onSubmitted?: () => void): void => {
+      const images = composerImages.images
+      if ((!text.trim() && images.length === 0) || isActive) return
+      void agent.sendMessage(text, references, images, () => {
+        composerImages.consumeImages()
+        setInput('')
+        onSubmitted?.()
+      })
     },
-    [agent, isActive, setInput],
+    [agent, composerImages, isActive, setInput],
   )
   const handleStop = useCallback(() => {
     if (isActive) agent.stopMessage()
   }, [agent, isActive])
   const handleNavigateWikilink = useCallback((target: string) => onOpenNote?.(target), [onOpenNote])
-  const handleNewChat = useCallback(() => {
+  const resetConversation = useCallback(() => {
+    const candidates = [...collectMessageImages(agent.messages), ...composerImages.discardImages()]
     agent.clearConversation()
+    // After clearing, so this session no longer owns its images; forks that share them keep them.
+    releaseUnownedImages(vaultPath, candidates, aiWorkspaceSessionIds())
+  }, [agent, composerImages, vaultPath])
+  const handleNewChat = useCallback(() => {
+    resetConversation()
     setInput('')
-  }, [agent, setInput])
-  return { handleSend, handleStop, handleNavigateWikilink, handleNewChat }
+  }, [resetConversation, setInput])
+  return { handleSend, handleStop, handleNavigateWikilink, handleNewChat, resetConversation }
 }
 
 export function useAiPanelController(options: UseAiPanelControllerArgs): AiPanelController {
-  const { vaultPath, vaultPaths, defaultAiAgent, defaultAiTarget, defaultAiAgentReady, defaultAiAgentReadiness, activeEntry, activeNoteContent, entries, openTabs, noteList, noteListFilter, locale = 'en', model, onOpenNote, onFileCreated, onFileModified, onVaultChanged, sessionId } = options
+  const { vaultPath, vaultPaths, defaultAiAgent, defaultAiTarget, defaultAiAgentReady, defaultAiAgentReadiness, activeEntry, activeNoteContent, entries, openTabs, noteList, noteListFilter, locale = 'en', model, onOpenNote, onFileCreated, onFileModified, onUnsupportedAiPaste, onVaultChanged, sessionId } = options
   const [input, setInput] = useState('')
   const { linkedEntries, contextPrompt } = useAiPanelContextSnapshot({ activeEntry, activeNoteContent, entries, input, openTabs, noteList, noteListFilter })
 
+  const composerImages = useAiComposerImages({
+    vaultPath,
+    sessionId,
+    locale,
+    onToast: onUnsupportedAiPaste,
+  })
   const { agent, permissionMode } = usePanelAgent({
     vaultPath,
     vaultPaths,
@@ -184,15 +213,18 @@ export function useAiPanelController(options: UseAiPanelControllerArgs): AiPanel
     model,
     onFileCreated,
     onFileModified,
+    onUnsupportedAiPaste,
     onVaultChanged,
     sessionId,
   })
   const isActive = agent.status === 'thinking' || agent.status === 'tool-executing'
-  const { handleSend, handleStop, handleNavigateWikilink, handleNewChat } = useAiPanelActions({
+  const { handleSend, handleStop, handleNavigateWikilink, handleNewChat, resetConversation } = useAiPanelActions({
     agent,
+    composerImages,
     isActive,
     onOpenNote,
     setInput,
+    vaultPath,
   })
 
   const handlePermissionModeChange = useAiPermissionModeHandler({
@@ -205,6 +237,7 @@ export function useAiPanelController(options: UseAiPanelControllerArgs): AiPanel
 
   return {
     agent,
+    composerImages,
     input,
     setInput,
     linkedEntries,
@@ -216,5 +249,6 @@ export function useAiPanelController(options: UseAiPanelControllerArgs): AiPanel
     handleNavigateWikilink,
     handlePermissionModeChange,
     handleNewChat,
+    resetConversation,
   }
 }

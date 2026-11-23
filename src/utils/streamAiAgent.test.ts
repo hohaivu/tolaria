@@ -171,6 +171,7 @@ describe('streamAiAgent', () => {
         vault_paths: null,
         permission_mode: 'power_user',
         event_name: listenedEventName,
+        attachments: [],
       },
     })
     expect(callbacks.onThinking).toHaveBeenCalledWith('thinking...')
@@ -363,5 +364,40 @@ describe('streamAiAgent', () => {
     expect(first.onText).not.toHaveBeenCalledWith('second response')
     expect(second.onText).toHaveBeenCalledWith('second response')
     expect(second.onText).not.toHaveBeenCalledWith('first response')
+  })
+
+  it('forwards explicit attachments to the native stream request', async () => {
+    isTauriState.value = true
+    const unlistenMock = vi.fn()
+    let listenedEventName = ''
+
+    listenMock.mockImplementation(async (eventName: string) => {
+      listenedEventName = eventName
+      return unlistenMock
+    })
+    invokeMock.mockResolvedValue('session-attachments')
+
+    const callbacks = createCallbacks()
+    await streamAiAgent({
+      agent: 'claude_code',
+      message: 'Describe this screenshot',
+      vaultPath: '/vault',
+      attachments: ['/vault/.tolaria/tmp/123-shot.png'],
+      callbacks,
+    })
+
+    expect(invokeMock).toHaveBeenCalledWith('stream_ai_agent', {
+      request: {
+        agent: 'claude_code',
+        model: null,
+        message: 'Describe this screenshot',
+        system_prompt: null,
+        vault_path: '/vault',
+        vault_paths: null,
+        permission_mode: 'safe',
+        event_name: listenedEventName,
+        attachments: ['/vault/.tolaria/tmp/123-shot.png'],
+      },
+    })
   })
 })

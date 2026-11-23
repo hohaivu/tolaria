@@ -18,9 +18,11 @@ import {
   stopAgentMessage,
   type AiAgentSessionRuntime,
 } from '../lib/aiAgentSession'
+import { releaseUnownedImages } from '../lib/aiChatImages'
 import type { ToolInvocation } from '../lib/aiAgentMessageState'
 import {
   aiWorkspaceSessionDispatchers,
+  aiWorkspaceSessionIds,
   aiWorkspaceSessionSnapshot,
   subscribeAiWorkspaceSession,
 } from '../lib/aiWorkspaceSessionStore'
@@ -37,6 +39,7 @@ interface UseCliAiAgentOptions {
   agentReady: boolean
   permissionMode: AiAgentPermissionMode
   sessionId?: string
+  onToast?: (message: string) => void
 }
 
 interface UseCliAiAgentRuntime extends AiAgentSessionRuntime {
@@ -121,7 +124,7 @@ export function useCliAiAgent(
   fileCallbacks: AgentFileCallbacks | undefined,
   options: UseCliAiAgentOptions,
 ) {
-  const { agent, agentReady, model, sessionId, target } = options
+  const { agent, agentReady, model, onToast, sessionId, target } = options
   const locale = options.locale ?? 'en'
   const { permissionMode } = options
   const localRuntime = useCliAiAgentRuntime(fileCallbacks)
@@ -143,19 +146,17 @@ export function useCliAiAgent(
       vaultPaths,
       permissionMode,
       systemPromptOverride: contextPrompt,
+      onToast,
     }
   }
 
-  async function sendPrompt(text: string, references?: NoteReference[]): Promise<void> {
+  async function sendMessage(text: string, references?: NoteReference[], images?: string[], onAdmitted?: () => void): Promise<void> {
     await sendAgentMessage({
       runtime,
       context: await buildAgentContext(),
-      prompt: { text, references },
+      prompt: { text, references, images },
+      onAdmitted,
     })
-  }
-
-  async function sendMessage(text: string, references?: NoteReference[]): Promise<void> {
-    await sendPrompt(text, references)
   }
 
   async function regenerateMessage(messageId: string): Promise<void> {
@@ -163,6 +164,7 @@ export function useCliAiAgent(
       runtime,
       context: await buildAgentContext(),
       messageId,
+      onImagesDiscarded: (paths) => releaseUnownedImages(vaultPath, paths, aiWorkspaceSessionIds()),
     })
   }
 

@@ -1,5 +1,6 @@
 mod ai_agent_processes;
 pub mod ai_agents;
+pub mod ai_chat_images;
 mod ai_model_tools;
 pub mod ai_models;
 pub mod antigravity_cli;
@@ -53,7 +54,7 @@ mod window_state;
 mod workspace_colors;
 
 #[cfg(desktop)]
-pub(crate) use asset_scope::sync_vault_asset_scope;
+pub(crate) use asset_scope::{sync_directory_asset_scope, sync_vault_asset_scope};
 #[cfg(desktop)]
 pub(crate) use desktop_runtime::sync_ws_bridge_for_vault;
 
@@ -338,6 +339,10 @@ macro_rules! app_invoke_handler {
             commands::sync_note_title,
             commands::save_image,
             commands::copy_image_to_vault,
+            commands::stage_ai_chat_image,
+            commands::stage_ai_chat_image_from_path,
+            commands::delete_ai_chat_images,
+            commands::clear_ai_chat_images,
             commands::rename_attachment,
             commands::download_remote_image_to_vault,
             commands::delete_note,

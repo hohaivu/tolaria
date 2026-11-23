@@ -119,10 +119,11 @@ function usePersistentAiPanelController(
   | 'onOpenNote'
   | 'onFileCreated'
   | 'onFileModified'
+  | 'onUnsupportedAiPaste'
   | 'onVaultChanged'
   >,
 ): AiPanelController {
-  const { showAIChat, defaultAiAgent = DEFAULT_AI_AGENT, defaultAiTarget, defaultAiAgentReadiness, defaultAiAgentReady = true, inspectorEntry, inspectorContent, entries, vaultPath, vaultPaths, noteList, noteListFilter, locale, onOpenNote, onFileCreated, onFileModified, onVaultChanged } = options
+  const { showAIChat, defaultAiAgent = DEFAULT_AI_AGENT, defaultAiTarget, defaultAiAgentReadiness, defaultAiAgentReady = true, inspectorEntry, inspectorContent, entries, vaultPath, vaultPaths, noteList, noteListFilter, locale, onOpenNote, onFileCreated, onFileModified, onUnsupportedAiPaste, onVaultChanged } = options
   return useAiPanelController({
     vaultPath,
     vaultPaths,
@@ -139,6 +140,7 @@ function usePersistentAiPanelController(
     onOpenNote,
     onFileCreated,
     onFileModified,
+    onUnsupportedAiPaste,
     onVaultChanged,
   })
 }
@@ -162,6 +164,7 @@ export function EditorRightPanel(options: EditorRightPanelProps) {
     onOpenNote,
     onFileCreated,
     onFileModified,
+    onUnsupportedAiPaste,
     onVaultChanged,
   })
   const { handleNewChat } = aiPanelController

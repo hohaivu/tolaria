@@ -18,6 +18,8 @@ import { streamAiAgent } from '../utils/streamAiAgent'
 import { streamAiModel } from '../utils/streamAiModel'
 import { hydrateNoteReferences } from '../utils/ai-reference-content'
 import { createTranslator } from './i18n'
+import { getAiAgentDefinition } from './aiAgents'
+import { collectMessageImages } from './aiChatImages'
 
 export interface AiAgentAbortState {
   aborted: boolean
@@ -39,26 +41,47 @@ interface SendAgentMessageOptions {
   runtime: AiAgentSessionRuntime
   context: AgentExecutionContext
   prompt: PendingUserPrompt
+  /** Called once the send boundary accepts the prompt (not for ignored or image-rejected sends). */
+  onAdmitted?: () => void
 }
 
 interface RegenerateAgentMessageOptions {
   runtime: AiAgentSessionRuntime
   context: AgentExecutionContext
   messageId: string
+  /** Receives image paths that only the discarded later turns referenced. */
+  onImagesDiscarded?: (paths: string[]) => void
 }
 
 interface SelectedTargetStreamRequest {
   context: AgentExecutionContext
   formattedMessage: string
   systemPrompt: string
+  attachments?: string[]
   callbacks: ReturnType<typeof createStreamCallbacks>
   signal?: AbortSignal
 }
 
+export function canTargetReadImagePaths(
+  context: Pick<AgentExecutionContext, 'agent' | 'target'>,
+): boolean {
+  if (context.target?.kind === 'api_model') return false
+  const agent = context.target?.kind === 'agent' ? context.target.agent : context.agent
+  return getAiAgentDefinition(agent).readsImagePaths
+}
+
+function resolveTargetLabel(
+  context: Pick<AgentExecutionContext, 'agent' | 'target'>,
+): string {
+  return context.target?.label ?? getAiAgentDefinition(context.agent).label
+}
+
 function normalizePrompt(prompt: PendingUserPrompt): PendingUserPrompt {
+  const images = prompt.images?.map((path) => path.trim()).filter(Boolean)
   return {
     text: prompt.text.trim(),
     references: prompt.references && prompt.references.length > 0 ? prompt.references : undefined,
+    ...(images && images.length > 0 ? { images } : {}),
   }
 }
 
@@ -67,7 +90,8 @@ function completedMessageCount(messages: AiAgentMessage[]): number {
 }
 
 function shouldIgnorePrompt(status: AgentStatus, prompt: PendingUserPrompt): boolean {
-  return !prompt.text || status === 'thinking' || status === 'tool-executing'
+  const hasContent = Boolean(prompt.text) || Boolean(prompt.images && prompt.images.length > 0)
+  return !hasContent || status === 'thinking' || status === 'tool-executing'
 }
 
 function blockMissingVault(runtime: AiAgentSessionRuntime, context: AgentExecutionContext, prompt: PendingUserPrompt): void {
@@ -84,10 +108,22 @@ function blockUnavailableAgent(runtime: AiAgentSessionRuntime, context: AgentExe
   )
 }
 
+function blockIfUnsupportedImages(
+  context: AgentExecutionContext,
+  images?: readonly string[],
+): boolean {
+  if (!images || images.length === 0 || canTargetReadImagePaths(context)) return false
+  trackAiAgentMessageBlocked(context.agent, 'images_unsupported')
+  const t = createTranslator(context.locale ?? 'en')
+  context.onToast?.(t('ai.panel.images.unsupported', { agent: resolveTargetLabel(context) }))
+  return true
+}
+
 async function streamWithSelectedTarget({
   context,
   formattedMessage,
   systemPrompt,
+  attachments,
   callbacks,
   signal,
 }: SelectedTargetStreamRequest): Promise<void> {
@@ -112,6 +148,7 @@ async function streamWithSelectedTarget({
     vaultPath: context.vaultPath,
     vaultPaths: context.vaultPaths,
     permissionMode: context.permissionMode,
+    attachments: attachments ?? [],
     callbacks,
     signal,
   })
@@ -127,11 +164,14 @@ export async function sendAgentMessage({
   runtime,
   context,
   prompt,
+  onAdmitted,
 }: SendAgentMessageOptions): Promise<void> {
   const currentStatus = runtime.statusRef.current
   const normalizedPrompt = normalizePrompt(prompt)
 
   if (shouldIgnorePrompt(currentStatus, normalizedPrompt)) return
+  if (blockIfUnsupportedImages(context, normalizedPrompt.images)) return
+  onAdmitted?.()
 
   if (!context.vaultPath) {
     blockMissingVault(runtime, context, normalizedPrompt)
@@ -149,6 +189,7 @@ export async function sendAgentMessage({
     hasContext: !!context.systemPromptOverride,
     referenceCount: normalizedPrompt.references?.length ?? 0,
     historyMessageCount: completedMessageCount(runtime.messagesRef.current),
+    imageCount: normalizedPrompt.images?.length ?? 0,
   })
 
   const controller = new AbortController()
@@ -190,6 +231,7 @@ export async function sendAgentMessage({
     context,
     formattedMessage,
     systemPrompt,
+    attachments: normalizedPrompt.images,
     callbacks,
     signal: controller.signal,
   })
@@ -199,13 +241,17 @@ export async function regenerateAgentMessage({
   runtime,
   context,
   messageId,
+  onImagesDiscarded,
 }: RegenerateAgentMessageOptions): Promise<void> {
   const currentMessages = runtime.messagesRef.current
   const messageIndex = currentMessages.findIndex((message) => message.id === messageId)
   const message = currentMessages[messageIndex]
   if (!message || message.localMarker || runtime.statusRef.current === 'thinking' || runtime.statusRef.current === 'tool-executing') return
+  if (blockIfUnsupportedImages(context, message.images)) return
 
   const preservedMessages = currentMessages.slice(0, messageIndex)
+  const reused = new Set(message.images)
+  const discardedImages = collectMessageImages(currentMessages.slice(messageIndex + 1)).filter((path) => !reused.has(path))
   runtime.abortRef.current = { aborted: false }
   runtime.responseAccRef.current = ''
   runtime.toolInputMapRef.current = new Map()
@@ -213,6 +259,8 @@ export async function regenerateAgentMessage({
   runtime.statusRef.current = 'idle'
   runtime.setMessages(preservedMessages)
   runtime.setStatus('idle')
+  // After truncation, so the session itself no longer counts as an owner of the discarded turns.
+  onImagesDiscarded?.(discardedImages)
 
   await sendAgentMessage({
     runtime,
@@ -220,6 +268,7 @@ export async function regenerateAgentMessage({
     prompt: {
       text: message.userMessage,
       references: message.references,
+      images: message.images,
     },
   })
 }

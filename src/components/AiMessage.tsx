@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef } from 'react'
 import { CaretRight, CaretDown, Brain, ArrowsClockwise, Copy, GitBranch, Terminal } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import { AiActionCard, type AiActionStatus } from './AiActionCard'
+import { AiMessageImages } from './AiMessageImages'
 import { MarkdownContent } from './MarkdownContent'
 import { translate, type AppLocale } from '../lib/i18n'
 import type { NoteReference } from '../utils/ai-context'
@@ -21,6 +22,7 @@ export interface AiAction {
 export interface AiMessageProps {
   userMessage: string
   references?: NoteReference[]
+  images?: string[]
   localMarker?: string
   locale?: AppLocale
   messageId?: string
@@ -75,10 +77,14 @@ function ReferencePill({ reference, onClick }: { reference: NoteReference; onCli
 
 function UserBubble({
   content,
+  images,
+  locale,
   references,
   onOpenNote,
 }: {
   content: string
+  images?: string[]
+  locale: AppLocale
   references?: NoteReference[]
   onOpenNote?: (path: string) => void
 }) {
@@ -104,7 +110,10 @@ function UserBubble({
             ))}
           </div>
         )}
-        {content}
+        {images && images.length > 0 && (
+          <AiMessageImages images={images} locale={locale} hasText={content.length > 0} />
+        )}
+        {content || null}
       </div>
     </div>
   )
@@ -381,6 +390,7 @@ function ConversationMessage(options: AiMessageProps) {
   const {
     userMessage,
     references,
+    images,
     locale = 'en',
     messageId,
     reasoning,
@@ -414,7 +424,7 @@ function ConversationMessage(options: AiMessageProps) {
 
   return (
     <div className="min-w-0 max-w-full" data-testid="ai-message" style={{ marginBottom: 16 }}>
-      <UserBubble content={userMessage} references={references} onOpenNote={onOpenNote} />
+      <UserBubble content={userMessage} images={images} locale={locale} references={references} onOpenNote={onOpenNote} />
       {reasoning && (
         <ReasoningBlock
           locale={locale}

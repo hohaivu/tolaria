@@ -152,11 +152,25 @@ pub struct AiAgentStreamRequest {
     pub permission_mode: Option<AiAgentPermissionMode>,
     #[serde(default)]
     pub event_name: Option<String>,
+    #[serde(default)]
+    pub attachments: Vec<String>,
 }
 
 impl AiAgentStreamRequest {
     fn permission_mode(&self) -> AiAgentPermissionMode {
         self.permission_mode.unwrap_or_default()
+    }
+
+    fn prepare_attachments(&mut self) -> Result<(), String> {
+        if self.attachments.is_empty() {
+            return Ok(());
+        }
+        let attachments = std::mem::take(&mut self.attachments);
+        let validated =
+            crate::ai_chat_images::validate_staged_attachments(&self.vault_path, &attachments)?;
+        self.message =
+            crate::ai_chat_images::append_attachments_to_message(&self.message, &validated);
+        Ok(())
     }
 }
 
@@ -223,10 +237,14 @@ fn missing_availability() -> AiAgentAvailability {
     }
 }
 
-pub fn run_ai_agent_stream<F>(request: AiAgentStreamRequest, emit: F) -> Result<String, String>
+pub fn run_ai_agent_stream<F>(
+    mut request: AiAgentStreamRequest,
+    emit: F,
+) -> Result<String, String>
 where
     F: FnMut(AiAgentStreamEvent),
 {
+    request.prepare_attachments()?;
     let permission_mode = request.permission_mode();
     dispatch_ai_agent_stream(request, permission_mode, emit)
 }
@@ -403,6 +421,120 @@ mod tests {
             vault_paths: Vec::new(),
             permission_mode,
             event_name: None,
+            attachments: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn request_without_attachments_deserializes_and_keeps_message_unchanged() {
+        let json = serde_json::json!({
+            "agent": "claude_code",
+            "model": null,
+            "message": "Summarize my notes",
+            "system_prompt": null,
+            "vault_path": "/tmp/vault",
+            "permission_mode": "safe"
+        });
+        let mut request: AiAgentStreamRequest = serde_json::from_value(json).unwrap();
+        assert!(request.attachments.is_empty());
+
+        request.prepare_attachments().unwrap();
+        assert_eq!(request.message, "Summarize my notes");
+    }
+
+    #[test]
+    fn prepare_attachments_preserves_order_and_is_idempotent() {
+        let vault = tempfile::TempDir::new().unwrap();
+        let vault_path = vault.path().to_string_lossy().into_owned();
+        let tmp_dir = crate::ai_chat_images::ai_chat_tmp_dir(&vault_path);
+        std::fs::create_dir_all(&tmp_dir).unwrap();
+        let first = tmp_dir.join("1-first.png");
+        let second = tmp_dir.join("2-second.jpg");
+        std::fs::write(&first, b"1").unwrap();
+        std::fs::write(&second, b"2").unwrap();
+
+        let mut request = AiAgentStreamRequest {
+            agent: AiAgentId::Codex,
+            message: "Compare these".into(),
+            model: None,
+            system_prompt: None,
+            vault_path,
+            vault_paths: Vec::new(),
+            permission_mode: None,
+            event_name: None,
+            attachments: vec![
+                first.to_string_lossy().into_owned(),
+                second.to_string_lossy().into_owned(),
+            ],
+        };
+
+        request.prepare_attachments().unwrap();
+        let once = request.message.clone();
+        let first_idx = once.find("1-first.png").unwrap();
+        let second_idx = once.find("2-second.jpg").unwrap();
+        assert!(first_idx < second_idx);
+        assert!(request.attachments.is_empty());
+
+        request.attachments = vec![
+            first.to_string_lossy().into_owned(),
+            second.to_string_lossy().into_owned(),
+        ];
+        request.prepare_attachments().unwrap();
+        assert_eq!(request.message, once);
+    }
+
+    #[test]
+    fn run_ai_agent_stream_rejects_invalid_attachments_before_spawning() {
+        let vault = tempfile::TempDir::new().unwrap();
+        let outside = tempfile::TempDir::new().unwrap();
+        let vault_path = vault.path().to_string_lossy().into_owned();
+        let tmp_dir = crate::ai_chat_images::ai_chat_tmp_dir(&vault_path);
+        std::fs::create_dir_all(&tmp_dir).unwrap();
+        let outside_file = outside.path().join("secret.png");
+        std::fs::write(&outside_file, b"secret").unwrap();
+        let vault_root_file = vault.path().join("root.png");
+        std::fs::write(&vault_root_file, b"root").unwrap();
+
+        let mut bad_paths = vec![
+            outside_file.to_string_lossy().into_owned(),
+            tmp_dir
+                .join("..")
+                .join("..")
+                .join("root.png")
+                .to_string_lossy()
+                .into_owned(),
+            tmp_dir.join("missing.png").to_string_lossy().into_owned(),
+        ];
+
+        #[cfg(unix)]
+        {
+            let link = tmp_dir.join("symlink-out.png");
+            std::os::unix::fs::symlink(&outside_file, &link).unwrap();
+            bad_paths.push(link.to_string_lossy().into_owned());
+        }
+
+        for agent in [AiAgentId::ClaudeCode, AiAgentId::Codex] {
+            for bad_path in &bad_paths {
+                let err = run_ai_agent_stream(
+                    AiAgentStreamRequest {
+                        agent,
+                        message: "Read this".into(),
+                        model: None,
+                        system_prompt: None,
+                        vault_path: vault_path.clone(),
+                        vault_paths: Vec::new(),
+                        permission_mode: Some(AiAgentPermissionMode::Safe),
+                        event_name: None,
+                        attachments: vec![bad_path.clone()],
+                    },
+                    |_| panic!("no stream event expected when attachment validation fails"),
+                )
+                .unwrap_err();
+                assert!(
+                    err.contains("Attached image"),
+                    "unexpected error for {bad_path}: {err}"
+                );
+            }
         }
     }
 

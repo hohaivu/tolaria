@@ -182,13 +182,18 @@ define_desktop_stream_command!(
 );
 
 #[cfg(desktop)]
-fn normalize_agent_request(mut request: AiAgentStreamRequest) -> AiAgentStreamRequest {
-    request.vault_path = expand_tilde(&request.vault_path).into_owned();
-    request.vault_paths = request
-        .vault_paths
+fn expand_tilde_paths(paths: Vec<String>) -> Vec<String> {
+    paths
         .into_iter()
         .map(|path| expand_tilde(&path).into_owned())
-        .collect();
+        .collect()
+}
+
+#[cfg(desktop)]
+fn normalize_agent_request(mut request: AiAgentStreamRequest) -> AiAgentStreamRequest {
+    request.vault_path = expand_tilde(&request.vault_path).into_owned();
+    request.vault_paths = expand_tilde_paths(request.vault_paths);
+    request.attachments = expand_tilde_paths(request.attachments);
     request
 }
 
@@ -258,6 +263,60 @@ pub fn delete_ai_model_provider_api_key(provider_id: String) -> Result<(), Strin
 #[tauri::command]
 pub fn test_ai_model_provider(request: AiModelProviderTestRequest) -> Result<String, String> {
     crate::ai_models::test_ai_model_provider(request)
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+pub fn stage_ai_chat_image(
+    app_handle: tauri::AppHandle,
+    vault_path: String,
+    filename: String,
+    data_base64: String,
+) -> Result<String, String> {
+    super::vault::with_image_asset_scope(
+        &app_handle,
+        std::path::Path::new(&vault_path),
+        super::vault::ImageAssetScope::SavedFileDir,
+        |requested_root| {
+            crate::ai_chat_images::stage_ai_chat_image(requested_root, &filename, &data_base64)
+        },
+    )
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+pub fn stage_ai_chat_image_from_path(
+    app_handle: tauri::AppHandle,
+    vault_path: String,
+    source_path: String,
+) -> Result<String, String> {
+    let source_path = expand_tilde(&source_path);
+    super::vault::with_image_asset_scope(
+        &app_handle,
+        std::path::Path::new(&vault_path),
+        super::vault::ImageAssetScope::SavedFileDir,
+        |requested_root| {
+            crate::ai_chat_images::stage_ai_chat_image_from_path(
+                requested_root,
+                source_path.as_ref(),
+            )
+        },
+    )
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+pub fn delete_ai_chat_images(vault_path: String, paths: Vec<String>) -> Result<(), String> {
+    let vault_path = expand_tilde(&vault_path);
+    let expanded_paths = expand_tilde_paths(paths);
+    crate::ai_chat_images::delete_ai_chat_images(vault_path.as_ref(), &expanded_paths)
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+pub fn clear_ai_chat_images(vault_path: String) -> Result<(), String> {
+    let vault_path = expand_tilde(&vault_path);
+    crate::ai_chat_images::clear_ai_chat_images(vault_path.as_ref())
 }
 
 // ── Claude CLI (mobile stubs) ───────────────────────────────────────────────
@@ -378,6 +437,39 @@ pub fn test_ai_model_provider(
     Err("Direct AI model tests are not available in this mobile build yet.".into())
 }
 
+#[cfg(mobile)]
+#[tauri::command]
+pub fn stage_ai_chat_image(
+    _app_handle: tauri::AppHandle,
+    _vault_path: String,
+    _filename: String,
+    _data_base64: String,
+) -> Result<String, String> {
+    Err("AI chat image attachments are only available in the desktop app.".into())
+}
+
+#[cfg(mobile)]
+#[tauri::command]
+pub fn stage_ai_chat_image_from_path(
+    _app_handle: tauri::AppHandle,
+    _vault_path: String,
+    _source_path: String,
+) -> Result<String, String> {
+    Err("AI chat image attachments are only available in the desktop app.".into())
+}
+
+#[cfg(mobile)]
+#[tauri::command]
+pub fn delete_ai_chat_images(_vault_path: String, _paths: Vec<String>) -> Result<(), String> {
+    Err("AI chat image attachments are only available in the desktop app.".into())
+}
+
+#[cfg(mobile)]
+#[tauri::command]
+pub fn clear_ai_chat_images(_vault_path: String) -> Result<(), String> {
+    Err("AI chat image attachments are only available in the desktop app.".into())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -398,6 +490,7 @@ mod tests {
             vault_paths: vec!["~/Vaults/secondary".into()],
             permission_mode: None,
             event_name: None,
+            attachments: Vec::new(),
         };
 
         let normalized = normalize_agent_request(request);
@@ -428,6 +521,7 @@ mod tests {
             vault_paths: Vec::new(),
             permission_mode: None,
             event_name: None,
+            attachments: Vec::new(),
         };
 
         let normalized = normalize_agent_request(request);
@@ -480,5 +574,56 @@ mod tests {
         assert!(dir.path().join("AGENTS.md").exists());
         assert!(dir.path().join("CLAUDE.md").exists());
         assert!(dir.path().join("GEMINI.md").exists());
+    }
+
+    #[cfg(desktop)]
+    #[test]
+    fn normalize_agent_request_expands_tilde_in_attachments() {
+        use crate::ai_agents::AiAgentId;
+
+        let home = dirs::home_dir().unwrap();
+        let request = AiAgentStreamRequest {
+            agent: AiAgentId::ClaudeCode,
+            message: "hi".into(),
+            model: None,
+            system_prompt: None,
+            vault_path: "~/Vaults/content".into(),
+            vault_paths: Vec::new(),
+            permission_mode: None,
+            event_name: None,
+            attachments: vec![
+                "~/Vaults/content/.tolaria/tmp/1-shot.png".into(),
+                "/abs/path/.tolaria/tmp/2-shot.png".into(),
+            ],
+        };
+
+        let normalized = normalize_agent_request(request);
+
+        assert_eq!(
+            normalized.attachments,
+            vec![
+                format!("{}/Vaults/content/.tolaria/tmp/1-shot.png", home.display()),
+                "/abs/path/.tolaria/tmp/2-shot.png".to_string(),
+            ]
+        );
+    }
+
+    #[cfg(desktop)]
+    #[test]
+    fn delete_and_clear_ai_chat_images_commands_manage_staged_files() {
+        use base64::Engine;
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let vault_path = dir.path().to_string_lossy().to_string();
+        let b64 = base64::engine::general_purpose::STANDARD.encode(b"png");
+        let first = crate::ai_chat_images::stage_ai_chat_image(&vault_path, "one.png", &b64).unwrap();
+        let second = crate::ai_chat_images::stage_ai_chat_image(&vault_path, "two.png", &b64).unwrap();
+
+        delete_ai_chat_images(vault_path.clone(), vec![first.clone()]).unwrap();
+        assert!(!std::path::Path::new(&first).exists());
+        assert!(std::path::Path::new(&second).exists());
+
+        clear_ai_chat_images(vault_path).unwrap();
+        assert!(!std::path::Path::new(&second).exists());
     }
 }

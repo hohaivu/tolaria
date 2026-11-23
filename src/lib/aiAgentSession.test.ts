@@ -12,6 +12,7 @@ const {
   streamAiModelMock,
   trackEventMock,
   trimHistoryMock,
+  agentDefinitionOverrides,
 } = vi.hoisted(() => ({
   buildAgentSystemPromptMock: vi.fn(() => 'SYSTEM'),
   createStreamCallbacksMock: vi.fn(() => ({ stream: 'callbacks' })),
@@ -22,6 +23,7 @@ const {
   streamAiModelMock: vi.fn(async () => {}),
   trackEventMock: vi.fn(),
   trimHistoryMock: vi.fn((history: unknown) => history),
+  agentDefinitionOverrides: {} as Record<string, { readsImagePaths?: boolean }>,
 }))
 
 vi.mock('../utils/ai-agent', () => ({
@@ -55,8 +57,21 @@ vi.mock('./telemetry', () => ({
   trackEvent: trackEventMock,
 }))
 
+vi.mock('./aiAgents', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./aiAgents')>()
+  return {
+    ...actual,
+    getAiAgentDefinition: (agent: Parameters<typeof actual.getAiAgentDefinition>[0]) => {
+      const def = actual.getAiAgentDefinition(agent)
+      const override = agentDefinitionOverrides[agent]
+      return override ? { ...def, ...override } : def
+    },
+  }
+})
+
 import {
   clearAgentConversation,
+  regenerateAgentMessage,
   sendAgentMessage,
   stopAgentMessage,
   type AiAgentSessionRuntime,
@@ -222,6 +237,9 @@ describe('aiAgentSession', () => {
     streamAiAgentMock.mockResolvedValue(undefined)
     hydrateNoteReferencesMock.mockImplementation(async (references: unknown) => references)
     trackEventMock.mockClear()
+    for (const key of Object.keys(agentDefinitionOverrides)) {
+      delete agentDefinitionOverrides[key]
+    }
   })
 
   async function expectLocalResponse(options: {
@@ -340,6 +358,7 @@ describe('aiAgentSession', () => {
     expectStreamingRequest(session.runtime)
     expect(streamAiAgentMock).toHaveBeenCalledWith(expect.objectContaining({
       model: 'gpt-5.6-sol',
+      attachments: [],
     }))
     expect(trackEventMock).toHaveBeenCalledWith('ai_agent_message_sent', {
       agent: 'codex',
@@ -347,6 +366,7 @@ describe('aiAgentSession', () => {
       has_context: 1,
       reference_count: 1,
       history_message_count: 1,
+      image_count: 0,
     })
   })
 
@@ -454,5 +474,177 @@ describe('aiAgentSession', () => {
       had_partial_response: 0,
       tool_count: 0,
     })
+  })
+
+  it('sends an image-only message with attachments and image_count analytics', async () => {
+    nextMessageIdMock.mockReturnValue('msg-img-only')
+    const session = createRuntime()
+    const stagedPath = '/vault/.tolaria/tmp/1700000000001-shot.png'
+    const onAdmitted = vi.fn()
+
+    await sendAgentMessage({
+      runtime: session.runtime,
+      context: {
+        agent: 'claude_code',
+        ready: true,
+        vaultPath: '/vault',
+        permissionMode: 'safe',
+      },
+      onAdmitted,
+      prompt: {
+        text: '   ',
+        images: [stagedPath],
+      },
+    })
+
+    expect(session.getMessages()).toEqual([{
+      userMessage: '',
+      references: undefined,
+      images: [stagedPath],
+      actions: [],
+      isStreaming: true,
+      id: 'msg-img-only',
+    }])
+    expect(onAdmitted).toHaveBeenCalledOnce()
+    expect(streamAiAgentMock).toHaveBeenCalledWith(expect.objectContaining({
+      attachments: [stagedPath],
+    }))
+    expect(trackEventMock).toHaveBeenCalledWith('ai_agent_message_sent', expect.objectContaining({
+      agent: 'claude_code',
+      image_count: 1,
+    }))
+  })
+
+  it('blocks image sends on API-model targets with a localized toast and analytics', async () => {
+    const onToast = vi.fn()
+    const onAdmitted = vi.fn()
+    const session = createRuntime()
+
+    await sendAgentMessage({
+      runtime: session.runtime,
+      context: {
+        agent: 'claude_code',
+        target: apiTarget,
+        locale: 'en',
+        ready: true,
+        vaultPath: '/vault',
+        permissionMode: 'safe',
+        onToast,
+      },
+      onAdmitted,
+      prompt: {
+        text: 'Describe this',
+        images: ['/vault/.tolaria/tmp/1700000000001-shot.png'],
+      },
+    })
+
+    expect(onAdmitted).not.toHaveBeenCalled()
+    expect(streamAiModelMock).not.toHaveBeenCalled()
+    expect(streamAiAgentMock).not.toHaveBeenCalled()
+    expect(session.getMessages()).toEqual([])
+    expect(onToast).toHaveBeenCalledWith('OpenAI · GPT-5 nano does not support image attachments.')
+    expect(trackEventMock).toHaveBeenCalledWith('ai_agent_message_blocked', {
+      agent: 'claude_code',
+      reason: 'images_unsupported',
+    })
+  })
+
+  it('blocks image sends when an agent has readsImagePaths set to false', async () => {
+    agentDefinitionOverrides.codex = { readsImagePaths: false }
+    const onToast = vi.fn()
+    const session = createRuntime()
+
+    await sendAgentMessage({
+      runtime: session.runtime,
+      context: {
+        agent: 'codex',
+        locale: 'en',
+        ready: true,
+        vaultPath: '/vault',
+        permissionMode: 'safe',
+        onToast,
+      },
+      prompt: {
+        text: 'Check screenshot',
+        images: ['/vault/.tolaria/tmp/1700000000001-shot.png'],
+      },
+    })
+
+    expect(streamAiAgentMock).not.toHaveBeenCalled()
+    expect(session.getMessages()).toEqual([])
+    expect(onToast).toHaveBeenCalledWith('Codex does not support image attachments.')
+    expect(trackEventMock).toHaveBeenCalledWith('ai_agent_message_blocked', {
+      agent: 'codex',
+      reason: 'images_unsupported',
+    })
+  })
+
+  it('resends the original message images when regenerating and keeps message if target cannot read images', async () => {
+    const stagedPath = '/vault/.tolaria/tmp/1700000000002-chart.png'
+    const session = createRuntime([{
+      id: 'msg-img-1',
+      userMessage: 'Summarize chart',
+      images: [stagedPath],
+      actions: [],
+      response: 'Initial answer',
+    }])
+    nextMessageIdMock.mockReturnValue('msg-img-regen')
+
+    await regenerateAgentMessage({
+      runtime: session.runtime,
+      context: {
+        agent: 'claude_code',
+        ready: true,
+        vaultPath: '/vault',
+        permissionMode: 'safe',
+      },
+      messageId: 'msg-img-1',
+    })
+
+    expect(streamAiAgentMock).toHaveBeenCalledWith(expect.objectContaining({
+      attachments: [stagedPath],
+    }))
+    expect(session.getMessages()).toHaveLength(1)
+    expect(session.getMessages()[0]?.images).toEqual([stagedPath])
+
+    session.runtime.setStatus('idle')
+    const onToast = vi.fn()
+    await regenerateAgentMessage({
+      runtime: session.runtime,
+      context: {
+        agent: 'claude_code',
+        target: apiTarget,
+        ready: true,
+        vaultPath: '/vault',
+        permissionMode: 'safe',
+        onToast,
+      },
+      messageId: 'msg-img-regen',
+    })
+
+    expect(streamAiModelMock).not.toHaveBeenCalled()
+    expect(onToast).toHaveBeenCalledWith('OpenAI · GPT-5 nano does not support image attachments.')
+    expect(session.getMessages()).toHaveLength(1)
+  })
+
+  it('reports only image paths of discarded later turns when regenerating an earlier message', async () => {
+    const kept = '/vault/.tolaria/tmp/1-kept.png'
+    const later = '/vault/.tolaria/tmp/2-later.png'
+    const session = createRuntime([
+      { id: 'msg-a', userMessage: 'first', images: [kept], actions: [], response: 'A' },
+      { id: 'msg-b', userMessage: 'second', images: [later, kept], actions: [], response: 'B' },
+    ])
+    nextMessageIdMock.mockReturnValue('msg-a-regen')
+    const onImagesDiscarded = vi.fn()
+
+    await regenerateAgentMessage({
+      runtime: session.runtime,
+      context: { agent: 'claude_code', ready: true, vaultPath: '/vault', permissionMode: 'safe' },
+      messageId: 'msg-a',
+      onImagesDiscarded,
+    })
+
+    expect(onImagesDiscarded).toHaveBeenCalledTimes(1)
+    expect(onImagesDiscarded).toHaveBeenCalledWith([later])
   })
 })
