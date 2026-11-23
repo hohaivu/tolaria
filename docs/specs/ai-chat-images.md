@@ -13,6 +13,9 @@ The AI chat image attachment domain lets a user send up to four images with a me
 - **Draft image**: a staged image that the composer holds before send.
 - **Message image**: a staged image that a sent user message keeps.
 - **Vision gate**: the check that blocks a send when the target cannot read an image path.
+- **Owner**: a conversation that keeps its staged images on disk. The word means a conversation, not a person. A released conversation is not an owner.
+- **Released conversation**: a closed conversation. It keeps its message paths for history but owns no files.
+- **Staging vault**: the vault whose `.tolaria/tmp/` folder holds a staged image. It can differ from the active editor vault.
 
 ## Entry points
 
@@ -22,7 +25,9 @@ The AI chat image attachment domain lets a user send up to four images with a me
 | Drop (DOM) | `InlineWikilinkInput.tsx` (`handleDrop`) | Image files go to `onAttachImages`. |
 | Drop (native path) | `InlineWikilinkInput.tsx` (`insertNativePathDrop`) | Image paths go to `onAttachImages`. Other paths insert as text. |
 | Paperclip button | `src/components/AiPanelChrome.tsx` (`ComposerAttachButton`) | Opens the Tauri file picker. |
-| Composer hook | `src/components/useAiComposerImages.ts` | Owns the draft list, staging, and removal. |
+| Composer hook | `src/components/useAiComposerImages.ts` | Owns the draft list, staging, removal, and the cleanup on a vault switch. |
+
+The picker and native drop paths keep their bytes. `normalizeDialogPaths` in `src/utils/vault-dialog.ts` decodes only `file://` URLs. Reason: a folder name can end in a space.
 
 `AiPanelComposer` in `src/components/AiPanelChrome.tsx` serves both the AI panel and the AI workspace window. The command palette AI mode does not pass `onAttachImages`. It keeps the text-only paste and drop behaviour.
 
@@ -48,7 +53,8 @@ A message with images has one of these outcomes:
 - Allowed types are PNG, JPEG, GIF, and WebP. Reason: the owner chose these types.
 - HEIC and HEIF are rejected on the client. Reason: the owner chose to reject them, as the note drop does.
 - The Rust side checks the extension and the size before it writes any staged file. Reason: the staging command accepts data and paths from the renderer.
-- Rejected files never reach staging. The app shows a toast and never drops a file silently. Reason: the owner chose visible rejection.
+- A picked or dropped file that is too large reaches the staging command. The command rejects it before it writes any staged file. Reason: not stated in the code.
+- Rejected files never become staged files. The app shows a toast and never drops a file silently. Reason: the owner chose visible rejection.
 
 ## Storage
 
@@ -63,7 +69,7 @@ A message with images has one of these outcomes:
 - `prepare_attachments()` in `src-tauri/src/ai_agents.rs` runs before the agent adapter starts. It runs for all eight agents.
 - `prepare_attachments()` checks each path. Each path must be a regular file directly inside the canonical tmp folder.
 - `append_attachments_to_message` adds an "Attached images" block to the message text. The block lists the paths in request order.
-- The append step is idempotent. Reason: not stated in the code.
+- The append step is idempotent. A block counts only on whole lines, so a longer file name with the same prefix does not match. Reason: a longer file name that shares the prefix must not satisfy the check.
 - No CLI image flag changes. Reason: the design chose one path in the prompt for all eight agents.
 
 ## Vision gate
@@ -81,15 +87,21 @@ A message with images has one of these outcomes:
 | App start (main window) | Clears the tmp folder once for each vault path in the run | `clearAiChatImagesOnceForVault` in `src/App.tsx` |
 | Workspace window | Never clears the tmp folder. The window routes to its own app before the main window mounts. | `src/App.tsx` (`aiWorkspaceWindow` return, line 171) |
 | Draft image removed | Deletes that file | `useAiComposerImages.removeImage` |
-| New chat | Deletes the message images and the draft images | `useAiPanelController` (`handleNewChat`) |
-| Conversation closed | Releases the ownership of the closed conversation. Deletes its message and draft images, except paths that an open session or an archived fork that you can restore still uses | `cleanupClosedConversationImages` in `src/lib/aiChatImages.ts` |
-| Conversation restored | The conversation owns its paths again | `reclaimSessionImages` in `src/lib/aiChatImages.ts` |
+| New chat or palette prompt | Clears the conversation. Deletes its images that no other session owns | `resetConversation` in `src/components/useAiPanelController.ts` |
+| Conversation closed | Sets `released` on the conversation. Deletes its message and draft images that no remaining session owns | `cleanupClosedConversationImages` in `src/lib/aiChatImages.ts`, called by `closeConversation` in `src/components/aiWorkspaceConversations.ts` |
+| Conversation archived | Keeps ownership. Deletes nothing | `archiveConversation` in `src/components/aiWorkspaceConversations.ts` |
+| Conversation restored | Clears `released`. The conversation owns its paths again | `reclaimSessionImages` in `src/lib/aiChatImages.ts`, called by `restoreConversation` |
+| Vault switch with no session (composer) | Retires in-flight staging. Deletes the draft images under the previous vault | Effect in `useAiComposerImages` |
 | Message regenerated | Deletes the images of the discarded later turns, except images that the regenerated message reuses and paths that another session still uses | `releaseUnownedImages` in `src/lib/aiChatImages.ts`, called from `regenerateMessage` in `src/hooks/useCliAiAgent.ts` |
 
 - Reason for the startup clear: staged files do not outlive the app run.
 - Reason for keeping shared paths: a fork copies the paths of its source, so one path can appear in more than one session. The file stays until no owner remains.
 - An archived fork stays an owner. Reason: you can restore it, and it must still show its images.
 - A closed conversation is not an owner. Its messages keep the paths and show placeholders after the file is deleted.
+- The `released` flag lives in the session snapshot in `src/lib/aiWorkspaceSessionStore.ts`. Every window reads the same flag. Reason: a recreated renderer must keep a closed conversation released. Test: `src/lib/aiChatImagesOwnership.test.ts`.
+- Cleanup deletes each path in its staging vault. A path outside `.tolaria/tmp/` uses the vault that the caller passes. Reason: the active editor vault can differ from the vault that staged the file. Native confinement still checks each vault.
+- A palette prompt uses the same reset as New chat. The queued prompt carries text only. Reason: not stated in the code.
+- A session draft is not cleared on a vault switch. Reason: not stated in the code.
 - A missing file renders a placeholder in the bubble. Reason: a restart clears the files, but sessions keep the paths.
 
 ## Draft admission and discard
