@@ -18,6 +18,7 @@ import type { AppLocale } from './i18n'
 export interface AiAgentMessage {
   userMessage: string
   references?: NoteReference[]
+  images?: string[]
   localMarker?: string
   reasoning?: string
   reasoningDone?: boolean
@@ -40,11 +41,13 @@ export interface AgentExecutionContext {
   agentDocsPath?: string
   permissionMode: AiAgentPermissionMode
   systemPromptOverride?: string
+  onToast?: (message: string) => void
 }
 
 export interface PendingUserPrompt {
   text: string
   references?: NoteReference[]
+  images?: string[]
 }
 
 function toChatHistory(messages: AiAgentMessage[]): ChatMessage[] {
@@ -87,6 +90,7 @@ export function appendLocalResponse(
     {
       userMessage: prompt.text,
       references: prompt.references,
+      ...(prompt.images && prompt.images.length > 0 ? { images: prompt.images } : {}),
       actions: [],
       response,
       id: nextMessageId(),
@@ -104,6 +108,7 @@ export function appendStreamingMessage(
     {
       userMessage: prompt.text,
       references: prompt.references,
+      ...(prompt.images && prompt.images.length > 0 ? { images: prompt.images } : {}),
       actions: [],
       isStreaming: true,
       id: messageId,

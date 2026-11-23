@@ -37,6 +37,7 @@ interface UseCliAiAgentOptions {
   agentReady: boolean
   permissionMode: AiAgentPermissionMode
   sessionId?: string
+  onToast?: (message: string) => void
 }
 
 interface UseCliAiAgentRuntime extends AiAgentSessionRuntime {
@@ -121,7 +122,7 @@ export function useCliAiAgent(
   fileCallbacks: AgentFileCallbacks | undefined,
   options: UseCliAiAgentOptions,
 ) {
-  const { agent, agentReady, model, sessionId, target } = options
+  const { agent, agentReady, model, onToast, sessionId, target } = options
   const locale = options.locale ?? 'en'
   const { permissionMode } = options
   const localRuntime = useCliAiAgentRuntime(fileCallbacks)
@@ -143,19 +144,20 @@ export function useCliAiAgent(
       vaultPaths,
       permissionMode,
       systemPromptOverride: contextPrompt,
+      onToast,
     }
   }
 
-  async function sendPrompt(text: string, references?: NoteReference[]): Promise<void> {
+  async function sendPrompt(text: string, references?: NoteReference[], images?: string[]): Promise<void> {
     await sendAgentMessage({
       runtime,
       context: await buildAgentContext(),
-      prompt: { text, references },
+      prompt: { text, references, images },
     })
   }
 
-  async function sendMessage(text: string, references?: NoteReference[]): Promise<void> {
-    await sendPrompt(text, references)
+  async function sendMessage(text: string, references?: NoteReference[], images?: string[]): Promise<void> {
+    await sendPrompt(text, references, images)
   }
 
   async function regenerateMessage(messageId: string): Promise<void> {

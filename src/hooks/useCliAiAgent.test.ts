@@ -220,4 +220,32 @@ describe('useCliAiAgent', () => {
       response: 'Codex is not available on this machine. Install it or switch the default AI agent in Settings.',
     })])
   })
+
+  it('forwards image attachments on sendMessage and regenerateMessage', async () => {
+    const { result } = renderAgent()
+    const stagedPath = '/Users/luca/Laputa/.tolaria/tmp/1700000000001-red.png'
+
+    await act(async () => {
+      await result.current.sendMessage('', [], [stagedPath])
+    })
+
+    expect(mockStreamAiAgent).toHaveBeenLastCalledWith(expect.objectContaining({
+      attachments: [stagedPath],
+    }))
+    expect(result.current.messages[0]).toEqual(expect.objectContaining({
+      userMessage: '',
+      images: [stagedPath],
+      response: 'reply',
+    }))
+
+    const messageId = result.current.messages[0]?.id ?? ''
+    await act(async () => {
+      await result.current.regenerateMessage(messageId)
+    })
+
+    expect(mockStreamAiAgent).toHaveBeenCalledTimes(2)
+    expect(mockStreamAiAgent).toHaveBeenLastCalledWith(expect.objectContaining({
+      attachments: [stagedPath],
+    }))
+  })
 })
